@@ -42,6 +42,7 @@ pub async fn execute_arrange(
     let mut failures = 0usize;
     let mut entries = Vec::new();
     let mut undo_entries = Vec::new();
+    let mut undo_ops: Vec<UndoOp> = Vec::new();
 
     for item in &items {
         if item.status != "ok" {
@@ -60,6 +61,10 @@ pub async fn execute_arrange(
 
         entries.push(format!("{}  →  {}\\", item.file.name, folder));
         undo_entries.push(format!("{}\\{}  ⟵  {}", folder, item.file.name, item.file.name));
+        undo_ops.push(UndoOp {
+            from: source.to_string_lossy().to_string(),
+            to: dest.to_string_lossy().to_string(),
+        });
 
         if dry_run {
             continue;
@@ -89,6 +94,7 @@ pub async fn execute_arrange(
                 if performed == 1 { "" } else { "s" }
             ),
             entries: undo_entries,
+            ops: undo_ops,
         })
     };
 

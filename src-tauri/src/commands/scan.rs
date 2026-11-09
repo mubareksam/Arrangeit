@@ -145,3 +145,53 @@ pub async fn scan_folder(path: String, recursive: bool) -> Result<ScanResult, St
 
     Ok(ScanResult { files, root: root.to_string_lossy().to_string(), truncated })
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderEntry {
+    pub name: String,
+    pub path: String,
+    pub files: usize,
+    pub bytes: u64,
+}
+
+/// Immediate sub-folders of `path` — including empty ones, which the file list
+/// alone can never surface. Used by the Folder styles tab.
+#[tauri::command]
+pub async fn list_folders(path: String) -> Result<Vec<FolderEntry>, String> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err(format!("Folder not found: {path}"));
+    }
+
+    let mut out: Vec<FolderEntry> = Vec::new();
+    let entries = std::fs::read_dir(&root).map_err(|e| format!("Cannot read {}: {e}", root.display()))?;
+    for entry in entries.filter_map(Result::ok) {
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let mut files = 0usize;
+        let mut bytes = 0u64;
+        if let Ok(children) = std::fs::read_dir(entry.path()) {
+            for child in children.filter_map(Result::ok) {
+                if let Ok(meta) = child.metadata() {
+                    if meta.is_file() {
+                        files += 1;
+                        bytes += meta.len();
+                    }
+                }
+            }
+        }
+        out.push(FolderEntry { name, path: entry.path().to_string_lossy().to_string(), files, bytes });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(out)
+}

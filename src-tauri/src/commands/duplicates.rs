@@ -69,6 +69,7 @@ pub async fn delete_duplicates(paths: Vec<String>, to_recycle_bin: bool) -> Resu
                 human_bytes(freed)
             ),
             entries,
+            ops: Vec::new(),
         })
     };
 

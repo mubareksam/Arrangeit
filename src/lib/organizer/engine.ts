@@ -525,11 +525,12 @@ export function buildDesktopIni(style: FolderStyle, iconDir = "%APPDATA%\\Arrang
   const icon = style.iconPath ?? `${iconDir}\\${iconFileName(style)}`;
   return [
     "[.ShellClassInfo]",
-    `InfoTip=${style.tooltip || `ArrangeIt · ${style.folder}`}`,
-    `IconResource=${icon},0`,
+    "ConfirmFileOp=0",
+    "NoSharing=1",
     `IconFile=${icon}`,
     "IconIndex=0",
-    "ConfirmFileOp=0",
+    `InfoTip=${style.tooltip || `ArrangeIt · ${style.folder}`}`,
+    `IconResource="${icon}",0`,
     "",
     "[ViewState]",
     "Mode=",
@@ -547,14 +548,15 @@ export function buildDesktopIni(style: FolderStyle, iconDir = "%APPDATA%\\Arrang
 export function styleSteps(style: FolderStyle, root = "C:\\"): StyleStep[] {
   const folder = `${root}${style.folder}`.replace(/\\+/g, "\\");
   return [
-    { command: `attrib +r "${folder}"`, ok: true, detail: "Mark the folder so Windows honours its desktop.ini" },
-    { command: `write "${folder}\\desktop.ini"`, ok: true, detail: `${buildDesktopIni(style).split("\r\n").length} lines` },
+    { command: `icon → ${iconFileName(style)}`, ok: true, detail: "16/32/48/256 px icon generated" },
+    { command: `write "${folder}\\desktop.ini"`, ok: true, detail: "IconResource + InfoTip written" },
+    { command: `attrib +r "${folder}"`, ok: true, detail: "Folder marked so Windows honours desktop.ini" },
     {
       command: `attrib +s +h "${folder}\\desktop.ini"`,
       ok: true,
-      detail: style.hideSystemFiles ? "Hidden + system (recommended)" : "Left visible",
+      detail: style.hideSystemFiles ? "Hidden + system" : "Left visible",
     },
-    { command: "ie4uinit.exe -show", ok: true, detail: "Refresh the shell icon cache" },
+    { command: "ie4uinit.exe -show", ok: true, detail: "Shell icon cache refreshed" },
   ];
 }
 

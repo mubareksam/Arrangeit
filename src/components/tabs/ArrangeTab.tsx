@@ -1,15 +1,27 @@
-import { DEFAULT_SIZE_RANGES, KIND_CONFIG, type ArrangeItem, type ArrangeMode, type ArrangeRule, type ArrangeSummaryRow } from "../../lib/organizer/types";
 import { humanBytes } from "../../lib/organizer/engine";
-import { Badge, KindDot, Segmented, Stat, Toggle } from "../ui";
+import {
+  DEFAULT_SIZE_RANGES,
+  type ArrangeItem,
+  type ArrangeMode,
+  type ArrangeRule,
+  type ArrangeSummaryRow,
+} from "../../lib/organizer/types";
+import { Badge, KindDot, Segmented, Toggle } from "../ui";
 
-const MODES: { id: ArrangeMode; title: string; glyph: string; desc: string }[] = [
-  { id: "date", title: "By date", glyph: "🗓", desc: "Year / month / day buckets" },
-  { id: "type", title: "By type", glyph: "▤", desc: "Images, Audio, Documents…" },
-  { id: "size", title: "By size", glyph: "⇕", desc: "Tiny → Huge ranges" },
-  { id: "similarity", title: "Similar", glyph: "≋", desc: "Cluster look-alike names" },
-  { id: "name", title: "By name", glyph: "A–Z", desc: "Alphabetical folders" },
-  { id: "ext", title: "By extension", glyph: ".ext", desc: "One folder per extension" },
+const MODES: { id: ArrangeMode; label: string; glyph: string; hint: string }[] = [
+  { id: "date", label: "Date", glyph: "🗓", hint: "Year, month or day buckets" },
+  { id: "type", label: "Type", glyph: "▤", hint: "Images, Audio, Documents…" },
+  { id: "size", label: "Size", glyph: "⇕", hint: "Tiny → Huge ranges" },
+  { id: "similarity", label: "Similar", glyph: "≋", hint: "Cluster look-alike names" },
+  { id: "name", label: "Name", glyph: "A", hint: "Alphabetical folders" },
+  { id: "ext", label: "Extension", glyph: ".", hint: "One folder per extension" },
 ];
+
+export interface ArrangePreset {
+  id: string;
+  label: string;
+  patch: Partial<ArrangeRule>;
+}
 
 export function ArrangeTab({
   rule,
@@ -19,7 +31,10 @@ export function ArrangeTab({
   scope,
   setScope,
   onApply,
+  onExport,
   busy,
+  presets,
+  onPreset,
 }: {
   rule: ArrangeRule;
   setRule: (next: ArrangeRule) => void;
@@ -28,22 +43,29 @@ export function ArrangeTab({
   scope: "selected" | "all";
   setScope: (scope: "selected" | "all") => void;
   onApply: () => void;
+  onExport: () => void;
   busy: boolean;
+  presets: ArrangePreset[];
+  onPreset: (preset: ArrangePreset) => void;
 }) {
+  const patch = (next: Partial<ArrangeRule>) => setRule({ ...rule, ...next });
   const collisions = items.filter((i) => i.status === "collision").length;
   const totalBytes = items.reduce((sum, i) => sum + i.file.size, 0);
-  const patch = (next: Partial<ArrangeRule>) => setRule({ ...rule, ...next });
+  const activeMode = MODES.find((m) => m.id === rule.mode)!;
 
   const toggleRange = (id: string) => {
     const has = rule.sizeRanges.some((r) => r.id === id);
-    const next = has ? rule.sizeRanges.filter((r) => r.id !== id) : [...rule.sizeRanges, DEFAULT_SIZE_RANGES.find((r) => r.id === id)!];
+    const next = has
+      ? rule.sizeRanges.filter((r) => r.id !== id)
+      : [...rule.sizeRanges, DEFAULT_SIZE_RANGES.find((r) => r.id === id)!];
     patch({ sizeRanges: next.length ? next : DEFAULT_SIZE_RANGES });
   };
 
   return (
     <div className="panel">
       <div className="panel-head">
-        <span className="panel-title">Auto-arrange</span>
+        <span className="panel-title">Arrange</span>
+        <span className="panel-sub">· {activeMode.hint}</span>
         <span className="spacer" />
         <Segmented
           ariaLabel="Scope"
@@ -51,36 +73,46 @@ export function ArrangeTab({
           onChange={setScope}
           options={[
             { id: "selected", label: "Selected" },
-            { id: "all", label: "All files" },
+            { id: "all", label: "All" },
           ]}
         />
-        <span className="kbd">dry-run on by default</span>
       </div>
 
       <div className="panel-body">
         <div className="pad stack">
-          <div className="cards">
-            {MODES.map((mode) => (
-              <button
-                key={mode.id}
-                className="modecard"
-                aria-pressed={rule.mode === mode.id}
-                onClick={() => patch({ mode: mode.id })}
-              >
-                <span className="mtitle">
-                  <span className="mono" style={{ color: "var(--accent)", minWidth: 18 }}>
-                    {mode.glyph}
-                  </span>
-                  {mode.title}
-                </span>
-                <span className="mdesc">{mode.desc}</span>
+          <div className="row wrap" style={{ justifyContent: "space-between" }}>
+            <div className="modes" role="group" aria-label="Arrange by">
+              {MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  className="mode"
+                  aria-pressed={rule.mode === mode.id}
+                  onClick={() => patch({ mode: mode.id })}
+                  title={mode.hint}
+                >
+                  <span className="glyph">{mode.glyph}</span>
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="row wrap" style={{ gap: 6 }}>
+            <span className="label" style={{ marginRight: 2 }}>
+              Presets
+            </span>
+            {presets.map((preset) => (
+              <button key={preset.id} className="chip" onClick={() => onPreset(preset)}>
+                {preset.label}
               </button>
             ))}
           </div>
+        </div>
 
+        <div className="settings">
           {rule.mode === "date" ? (
-            <div className="row wrap">
-              <span className="label">Granularity</span>
+            <>
+              <span className="label">Group by</span>
               <Segmented
                 ariaLabel="Date granularity"
                 value={rule.dateGranularity}
@@ -91,140 +123,128 @@ export function ArrangeTab({
                   { id: "day", label: "Day" },
                 ]}
               />
-            </div>
+            </>
           ) : null}
 
           {rule.mode === "size" ? (
-            <div className="stack">
-              <span className="label">Size ranges</span>
-              <div className="row wrap">
-                {DEFAULT_SIZE_RANGES.map((range) => {
-                  const on = rule.sizeRanges.some((r) => r.id === range.id);
-                  return (
-                    <button
-                      key={range.id}
-                      className="btn tiny"
-                      aria-pressed={on}
-                      style={on ? { borderColor: "var(--accent)", color: "var(--text)" } : { opacity: 0.6 }}
-                      onClick={() => toggleRange(range.id)}
-                    >
-                      {on ? "✓ " : ""}
-                      {range.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <>
+              <span className="label">Ranges</span>
+              {DEFAULT_SIZE_RANGES.map((range) => {
+                const on = rule.sizeRanges.some((r) => r.id === range.id);
+                return (
+                  <button key={range.id} className="chip" data-active={on} onClick={() => toggleRange(range.id)}>
+                    {range.label.split("(")[0].trim()}
+                    <span className="hint">{range.label.slice(range.label.indexOf("("))}</span>
+                  </button>
+                );
+              })}
+            </>
           ) : null}
 
           {rule.mode === "similarity" ? (
-            <div className="field">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <span className="label">Similarity threshold</span>
-                <span className="badge accent tnum">{rule.similarityThreshold}%</span>
-              </div>
+            <>
+              <span className="label">Threshold</span>
               <input
                 type="range"
                 min={50}
                 max={100}
-                step={1}
                 value={rule.similarityThreshold}
                 onChange={(e) => patch({ similarityThreshold: Number(e.target.value) })}
                 aria-label="Similarity threshold"
-                style={{ accentColor: "var(--accent)" }}
+                style={{ width: 130, accentColor: "var(--accent)" }}
               />
-              <span className="hint">
-                Bigram similarity between file names. Lower merges more aggressively — 80 is a good default.
-              </span>
-            </div>
+              <Badge>{rule.similarityThreshold}%</Badge>
+            </>
           ) : null}
 
-          <div className="row wrap" style={{ justifyContent: "space-between" }}>
-            <div className="row">
-              <span className="label">Action</span>
-              <Segmented
-                ariaLabel="Action"
-                value={rule.action}
-                onChange={(action) => patch({ action })}
-                options={[
-                  { id: "move", label: "Move" },
-                  { id: "copy", label: "Copy" },
-                ]}
-              />
-            </div>
-            <Toggle
-              checked={rule.dryRun}
-              onChange={(dryRun) => patch({ dryRun })}
-              label="Dry run"
-              hint="Plan only — nothing touches disk"
-            />
-          </div>
+          <span className="spacer" />
 
-          <div className="stats">
-            <Stat value={items.length} label="Files in plan" />
-            <Stat value={summary.length} label="Target folders" />
-            <Stat value={humanBytes(totalBytes)} label="Volume" />
-          </div>
-
-          <div className="divider" />
-
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="label">Preview</span>
-            <span className="hint">
-              {rule.action === "move" ? "Move" : "Copy"} · {rule.dryRun ? "dry run" : "will write to disk"}
-            </span>
-          </div>
+          <span className="label">Action</span>
+          <Segmented
+            ariaLabel="Action"
+            value={rule.action}
+            onChange={(action) => patch({ action })}
+            options={[
+              { id: "move", label: "Move" },
+              { id: "copy", label: "Copy" },
+            ]}
+          />
+          <Toggle checked={rule.dryRun} onChange={(dryRun) => patch({ dryRun })} label="Dry run" hint="Preview only — nothing is written" />
         </div>
 
-        <div className="planhead">
-          <span>Target folder</span>
-          <span>Files</span>
-          <span>Size</span>
-        </div>
-        {summary.map((row) => (
-          <div className="planrow" key={row.folder}>
-            <span className="target">
-              <span style={{ color: "var(--accent)" }}>▸</span>
-              <span className="ellipsis" title={row.folder}>
-                {row.folder}
-              </span>
-              {row.kinds.map((kind) => (
-                <KindDot key={kind} kind={kind} />
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Target folder</th>
+              <th className="num">Files</th>
+              <th className="num">Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summary.length === 0 ? (
+              <tr>
+                <td colSpan={3} style={{ color: "var(--faint)", padding: "18px 12px", textAlign: "center" }}>
+                  {items.length === 0 ? "Nothing selected for this plan." : "Pick a rule to build a plan."}
+                </td>
+              </tr>
+            ) : (
+              summary.map((row) => (
+                <tr key={row.folder}>
+                  <td>
+                    <span className="target">
+                      <span className="folder-ico" aria-hidden="true">
+                        ▸
+                      </span>
+                      <span className="ellipsis" title={row.folder}>
+                        {row.folder}
+                      </span>
+                      {row.kinds.map((kind) => (
+                        <KindDot key={kind} kind={kind} />
+                      ))}
+                      {row.status === "collision" ? <Badge tone="warn">clash</Badge> : null}
+                    </span>
+                  </td>
+                  <td className="num">{row.count}</td>
+                  <td className="num">{humanBytes(row.bytes)}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+
+        {items.length > 0 ? (
+          <>
+            <div className="divider" />
+            <div className="plan-sample">
+              <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
+                <span className="label">Sample moves</span>
+                <button className="btn sm ghost" onClick={onExport}>
+                  Export CSV
+                </button>
+              </div>
+              {items.slice(0, 6).map((item) => (
+                <div className="sample-row" key={item.file.id}>
+                  <KindDot kind={item.file.kind} />
+                  <span className="mono ellipsis" style={{ flex: "1 1 auto", minWidth: 0 }}>
+                    {item.file.name}
+                  </span>
+                  <span className="arrow">→</span>
+                  <span className="mono ellipsis" style={{ maxWidth: "44%", color: "var(--accent)" }}>
+                    {item.targetFolder}
+                  </span>
+                </div>
               ))}
-              {row.status === "collision" ? <Badge tone="warn">name clash</Badge> : null}
-            </span>
-            <span className="tnum dim">{row.count}</span>
-            <span className="tnum dim">{humanBytes(row.bytes)}</span>
-          </div>
-        ))}
-
-        <div className="pad stack">
-          <span className="label">Sample</span>
-          {items.slice(0, 8).map((item) => (
-            <div className="row" key={item.file.id} style={{ fontSize: 11.5 }}>
-              <KindDot kind={item.file.kind} />
-              <span className="mono ellipsis" style={{ minWidth: 0, flex: "1 1 auto", color: "var(--text-2)" }}>
-                {item.file.name}
-              </span>
-              <span className="arrow">→</span>
-              <span className="mono ellipsis" style={{ maxWidth: "42%", color: "var(--accent)" }}>
-                {item.targetFolder}
-              </span>
-              {item.status === "collision" ? <Badge tone="warn">!</Badge> : null}
+              {items.length > 6 ? <div className="hint">+{items.length - 6} more</div> : null}
             </div>
-          ))}
-          {items.length > 8 ? <span className="hint">+ {items.length - 8} more…</span> : null}
-          <span className="hint">
-            Kinds involved:{" "}
-            {[...new Set(items.map((i) => KIND_CONFIG[i.file.kind].plural))].join(" · ") || "—"}
-          </span>
-        </div>
+          </>
+        ) : null}
       </div>
 
       <div className="footbar">
-        {collisions > 0 ? <Badge tone="warn">{collisions} name clashes</Badge> : <Badge tone="ok">plan clean</Badge>}
-        <span className="hint">
-          {items.length} file{items.length === 1 ? "" : "s"} → {summary.length} folder{summary.length === 1 ? "" : "s"}
+        {collisions > 0 ? <Badge tone="warn">{collisions} name clash</Badge> : <Badge tone="ok">plan ready</Badge>}
+        <span className="hint tnum">
+          {items.length} file{items.length === 1 ? "" : "s"} · {summary.length} folder
+          {summary.length === 1 ? "" : "s"} · {humanBytes(totalBytes)}
         </span>
         <span className="spacer" />
         <button className="btn primary" disabled={busy || items.length === 0} onClick={onApply}>
