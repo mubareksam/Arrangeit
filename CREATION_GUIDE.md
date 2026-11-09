@@ -22,8 +22,8 @@ Six features, all local-only:
    blocking, collision-safe two-phase commit.
 4. **Folder styles** — custom folder icons via `desktop.ini` + `attrib +s +h` +
    `ie4uinit -show`.
-5. **Preview** — metadata, image tiles, 42-band audio waveform, text previews, and the
-   planned destination for the selected rule.
+5. **Preview** — real image/video/audio via the asset protocol, a waveform decoded from the
+   file itself, text previews, metadata, and the planned destination for the selected rule.
 6. **Themes** — Dusk / Midnight / Amber / Paper, persisted.
 
 ### Stack
@@ -94,6 +94,16 @@ export default defineConfig({
 
 **`tsconfig.json`** — `"lib": ["ES2021", "DOM", "DOM.Iterable"]`, `"jsx": "react-jsx"`,
 `strict`, `noUnusedLocals`, `noUnusedParameters`, `noEmit`.
+
+**Enable the asset protocol** (real previews) in `src-tauri/tauri.conf.json`:
+
+```json
+"security": { "csp": null, "assetProtocol": { "enable": true, "scope": ["**"] } }
+```
+
+`protocol-asset` is a **default** cargo feature of `tauri` 2 — do not disable default features.
+Then `convertFileSrc(path)` gives you a `http://asset.localhost/...` URL that `<img>`, `<video>`
+and `<audio>` can load directly.
 
 **`index.html`**
 
@@ -387,7 +397,12 @@ Verify before shipping:
 - [ ] Dry run leaves the filesystem untouched; the real run creates folders and `Undo` appears.
 - [ ] Duplicates: only the keeper is disabled; recycling frees the quoted bytes.
 - [ ] Rename: swapping two names succeeds (two-phase commit).
-- [ ] Folder style: icon appears after `ie4uinit -show` (or a manual Explorer refresh).
+- [ ] Folder style: icon appears after `ie4uinit -show` (or F5 in Explorer); applying twice
+      still succeeds, and **Remove style** restores the default folder.
+- [ ] Previews: an image renders, a video plays, an audio file plays with a waveform that
+      matches the sound.
+- [ ] The file list is empty on first launch until a folder is chosen — no demo data leaks
+      into the packaged app.
 
 ---
 
@@ -397,6 +412,12 @@ Verify before shipping:
 gh repo create mubareksam/Arrangeit --public --source=. --remote=origin --push
 git push -u origin main
 ```
+
+**Shipping without a local Rust toolchain:** `.github/workflows/build-windows.yml` builds the
+installer on `windows-latest` and attaches it to a release, so users just download the `.exe`.
+Bump `version` in `package.json`, `src-tauri/Cargo.toml` and `tauri.conf.json` together; keep
+`productName: "ArrangeIt"` and `identifier: com.arrangeit.app` **unchanged** so NSIS upgrades
+the previous install in place instead of installing a second copy.
 
 If the push fails with **403 "Resource not accessible by personal access token"**, the GitHub
 App installation is scoped to selected repositories: GitHub → Settings → Applications →

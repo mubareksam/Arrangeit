@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { humanBytes, MATCH_LABEL, keeperSuggestion } from "../../lib/organizer/engine";
+import { useEffect, useState } from "react";
+import { humanBytes, keeperSuggestion, MATCH_LABEL } from "../../lib/organizer/engine";
 import type { DuplicateGroup, DuplicateOptions } from "../../lib/organizer/types";
-import { Badge, Empty, KindDot, Stat, Toggle } from "../ui";
+import { Badge, Empty, Spinner, Toggle } from "../ui";
 
 export function DuplicatesTab({
   groups,
@@ -16,6 +16,7 @@ export function DuplicatesTab({
   onScan,
   busy,
   scanned,
+  scannedAt,
 }: {
   groups: DuplicateGroup[];
   options: DuplicateOptions;
@@ -29,62 +30,68 @@ export function DuplicatesTab({
   onScan: () => void;
   busy: boolean;
   scanned: boolean;
+  scannedAt: string | null;
 }) {
-  const [open, setOpen] = useState<string | null>(groups[0]?.id ?? null);
+  const [open, setOpen] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (groups.length === 0) return;
+    setOpen((current) => (current && groups.some((g) => g.id === current) ? current : groups[0].id));
+  }, [groups]);
+
+  const patch = (next: Partial<DuplicateOptions>) => setOptions({ ...options, ...next });
   const reclaimable = groups.reduce((sum, g) => sum + g.reclaimable, 0);
   const pendingBytes = groups
     .flatMap((g) => g.files)
     .filter((f) => pending.has(f.id))
     .reduce((sum, f) => sum + f.size, 0);
 
-  const patch = (next: Partial<DuplicateOptions>) => setOptions({ ...options, ...next });
-
   return (
     <div className="panel">
       <div className="panel-head">
-        <span className="panel-title">Duplicate finder</span>
+        <span className="panel-title">Duplicates</span>
+        <span className="panel-sub">
+          {scanned ? `${groups.length} groups · ${humanBytes(reclaimable)}` : "not scanned yet"}
+          {scannedAt ? ` · ${scannedAt}` : ""}
+        </span>
         <span className="spacer" />
-        <button className="btn tiny" onClick={onScan} disabled={busy}>
-          {busy ? "Hashing…" : scanned ? "Re-scan" : "Scan folder"}
+        <button className="btn sm" onClick={onScan} disabled={busy}>
+          {busy ? <Spinner /> : null}
+          {scanned ? "Re-scan" : "Scan"}
         </button>
       </div>
 
-      <div className="pad stack" style={{ paddingBottom: 8 }}>
-        <div className="row wrap" style={{ gap: 12 }}>
-          <Toggle checked={options.byHash} onChange={(byHash) => patch({ byHash })} label="Exact hash" hint="SHA-256 byte comparison" />
-          <Toggle checked={options.byAudio} onChange={(byAudio) => patch({ byAudio })} label="Audio" hint="Same track, different bitrate" />
-          <Toggle checked={options.byImage} onChange={(byImage) => patch({ byImage })} label="Images" hint="Same resolution + name" />
-          <Toggle checked={options.byName} onChange={(byName) => patch({ byName })} label="Fuzzy names" />
-        </div>
-
-        <div className="field">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="label">Fuzzy threshold</span>
-            <span className="badge tnum">{options.fuzzy}%</span>
-          </div>
-          <input
-            type="range"
-            min={50}
-            max={100}
-            value={options.fuzzy}
-            onChange={(e) => patch({ fuzzy: Number(e.target.value) })}
-            aria-label="Fuzzy threshold"
-            style={{ accentColor: "var(--accent)" }}
-          />
-        </div>
-
-        <div className="stats">
-          <Stat value={groups.length} label="Groups" />
-          <Stat value={humanBytes(reclaimable)} label="Reclaimable" tone="var(--ok)" />
-          <Stat value={pending.size} label="Selected" tone={pending.size ? "var(--warn)" : undefined} />
-        </div>
+      <div className="dup-options">
+        <Toggle checked={options.byHash} onChange={(byHash) => patch({ byHash })} label="Exact" hint="Byte-identical (SHA-256)" />
+        <Toggle checked={options.byAudio} onChange={(byAudio) => patch({ byAudio })} label="Audio" hint="Same recording, different encode" />
+        <Toggle checked={options.byImage} onChange={(byImage) => patch({ byImage })} label="Images" hint="Same resolution and name" />
+        <Toggle checked={options.byName} onChange={(byName) => patch({ byName })} label="Fuzzy" />
+        <span className="spacer" />
+        <span className="label">Similarity</span>
+        <input
+          type="range"
+          min={50}
+          max={100}
+          value={options.fuzzy}
+          onChange={(e) => patch({ fuzzy: Number(e.target.value) })}
+          aria-label="Fuzzy threshold"
+          style={{ width: 100, accentColor: "var(--accent)" }}
+        />
+        <Badge>{options.fuzzy}%</Badge>
       </div>
 
       <div className="panel-body">
         {groups.length === 0 ? (
           <Empty
-            title={scanned ? "No duplicates — everything is unique." : "Run a scan to group duplicates"}
-            hint="Exact matches use SHA-256; audio and images fall back to metadata plus fuzzy name matching."
+            title={scanned ? "No duplicates found" : "Nothing scanned yet"}
+            hint="Exact matches use SHA-256; audio compares duration, images compare pixel size, everything else falls back to fuzzy names."
+            action={
+              scanned ? null : (
+                <button className="btn primary sm" onClick={onScan} disabled={busy}>
+                  Find duplicates
+                </button>
+              )
+            }
           />
         ) : (
           <div className="dupgrid">
@@ -92,64 +99,53 @@ export function DuplicatesTab({
               const isOpen = open === group.id;
               const keeper = keepers[group.id] ?? keeperSuggestion(group).id;
               return (
-                <div className="dupcard" key={group.id}>
-                  <div className="dup-head" onClick={() => setOpen(isOpen ? null : group.id)}>
-                    <span style={{ color: "var(--text-3)", width: 10 }}>{isOpen ? "▾" : "▸"}</span>
-                    <span className="ellipsis" style={{ fontWeight: 560, fontSize: 12.5, minWidth: 0 }} title={group.label}>
-                      {group.label}
-                    </span>
+                <div className="dupcard" key={group.id} data-open={isOpen}>
+                  <button className="dup-head" onClick={() => setOpen(isOpen ? null : group.id)}>
+                    <span style={{ color: "var(--faint)", width: 10 }}>{isOpen ? "▾" : "▸"}</span>
+                    <span className="dup-title ellipsis">{group.label}</span>
                     <span className="spacer" />
                     <Badge tone={group.match === "exact" ? "ok" : "accent"}>{MATCH_LABEL[group.match]}</Badge>
-                    <Badge>{group.confidence}%</Badge>
                     <span className="badge tnum">{group.files.length}×</span>
-                    <span className="hint tnum" style={{ minWidth: 62, textAlign: "right" }}>
+                    <span className="hint tnum" style={{ minWidth: 58, textAlign: "right" }}>
                       {humanBytes(group.reclaimable)}
                     </span>
-                  </div>
+                  </button>
 
-                  {isOpen ? (
-                    <div className="dup-files">
-                      {group.files.map((file) => {
+                  {isOpen
+                    ? group.files.map((file) => {
                         const isKeeper = file.id === keeper;
+                        const checked = pending.has(file.id);
                         return (
-                          <div className="dupfile" key={file.id} title={file.path}>
+                          <div className="dup-file" key={file.id} title={file.path}>
                             <button
-                              className="checkbox btn"
+                              className="checkbox"
+                              aria-label={`Recycle ${file.name}`}
+                              disabled={isKeeper}
+                              onClick={() => onTogglePending(file.id)}
                               style={{
                                 padding: 0,
-                                width: 14,
-                                height: 14,
-                                justifyContent: "center",
-                                borderRadius: 4,
-                                borderColor: pending.has(file.id) ? "var(--danger)" : undefined,
-                                background: pending.has(file.id) ? "var(--danger)" : undefined,
-                                color: pending.has(file.id) ? "#fff" : "transparent",
+                                borderColor: checked ? "var(--danger)" : undefined,
+                                background: checked ? "var(--danger)" : undefined,
+                                color: checked ? "#fff" : "transparent",
                               }}
-                              aria-label={`Recycle ${file.name}`}
-                              onClick={() => onTogglePending(file.id)}
-                              disabled={isKeeper}
                             >
                               ✓
                             </button>
-                            <span style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                              <KindDot kind={file.kind} />
-                              <span className="ellipsis mono" style={{ fontSize: 11.5 }}>
-                                {file.folder}\{file.name}
-                              </span>
+                            <span className="mono ellipsis" style={{ minWidth: 0 }}>
+                              {file.folder}\{file.name}
                             </span>
                             <span className="hint tnum">{humanBytes(file.size)}</span>
                             {isKeeper ? (
                               <span className="keepflag">keep</span>
                             ) : (
-                              <button className="btn tiny ghost" onClick={() => setKeeper(group.id, file.id)}>
-                                keep this
+                              <button className="btn sm ghost" onClick={() => setKeeper(group.id, file.id)}>
+                                keep
                               </button>
                             )}
                           </div>
                         );
-                      })}
-                    </div>
-                  ) : null}
+                      })
+                    : null}
                 </div>
               );
             })}
@@ -158,15 +154,15 @@ export function DuplicatesTab({
       </div>
 
       <div className="footbar">
-        <button className="btn tiny" onClick={onSelectAllButKeepers} disabled={groups.length === 0}>
+        <button className="btn sm" onClick={onSelectAllButKeepers} disabled={groups.length === 0}>
           Select extras
         </button>
-        <span className="hint">
-          {pending.size} file{pending.size === 1 ? "" : "s"} · {humanBytes(pendingBytes)}
+        <span className="hint tnum">
+          {pending.size} selected · {humanBytes(pendingBytes)}
         </span>
         <span className="spacer" />
         <button className="btn danger" disabled={busy || pending.size === 0} onClick={onDelete}>
-          Recycle {pending.size} file{pending.size === 1 ? "" : "s"}
+          Recycle {pending.size || ""}
         </button>
       </div>
     </div>

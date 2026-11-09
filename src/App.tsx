@@ -2,18 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileList } from "./components/FileList";
 import { PreviewPane } from "./components/PreviewPane";
 import { TABS, TopBar, type TabId } from "./components/TopBar";
-import { ArrangeTab } from "./components/tabs/ArrangeTab";
+import { ArrangeTab, type ArrangePreset } from "./components/tabs/ArrangeTab";
 import { DuplicatesTab } from "./components/tabs/DuplicatesTab";
 import { FoldersTab } from "./components/tabs/FoldersTab";
 import { LogTab } from "./components/tabs/LogTab";
 import { RenameTab } from "./components/tabs/RenameTab";
-import { Badge, Spinner } from "./components/ui";
+import { Spinner } from "./components/ui";
 import {
   DEFAULT_DUPLICATE_OPTIONS,
   DEFAULT_RENAME_OPTIONS,
+  FOLDER_COLORS,
   applyRename,
   arrangePreview,
   findDuplicates,
+  formatDate,
   humanBytes,
   keeperSuggestion,
   summarizeArrange,
@@ -26,10 +28,15 @@ import {
   deleteDuplicates,
   executeArrange,
   isTauri,
+  listFolders,
   pickFolder,
+  refreshShell,
+  resetFolderStyle,
   revealInExplorer,
   revertFiles,
+  saveTextFile,
   scanFolder,
+  type FolderEntry,
 } from "./lib/organizer/bridge";
 import type {
   AppFile,
@@ -47,14 +54,24 @@ const INITIAL_RULE: ArrangeRule = {
   mode: "type",
   dateGranularity: "month",
   sizeRanges: DEFAULT_SIZE_RANGES,
-  similarityThreshold: 80,
+  similarityThreshold: 82,
   action: "move",
   dryRun: true,
 };
 
+const PRESETS: ArrangePreset[] = [
+  { id: "tidy", label: "Tidy by type", patch: { mode: "type", action: "move" } },
+  { id: "photos", label: "Photos by month", patch: { mode: "date", dateGranularity: "month" } },
+  { id: "big", label: "Big files", patch: { mode: "size", sizeRanges: DEFAULT_SIZE_RANGES.slice(3) } },
+  { id: "similar", label: "Similar names", patch: { mode: "similarity", similarityThreshold: 85 } },
+  { id: "ext", label: "One folder per extension", patch: { mode: "ext" } },
+];
+
 type Toast = { id: string; message: string; kind: "ok" | "error" };
 
 export default function App() {
+  const tauri = useMemo(() => isTauri(), []);
+
   const [theme, setTheme] = useState<string>(() => {
     try {
       return localStorage.getItem("arrangeit.theme") ?? "dusk";
@@ -63,27 +80,45 @@ export default function App() {
     }
   });
   const [tab, setTab] = useState<TabId>("arrange");
-  const [files, setFiles] = useState<AppFile[]>(MOCK_FILES);
-  const [root, setRoot] = useState(DEMO_ROOT);
-  const [selection, setSelection] = useState<Set<string>>(() => new Set(MOCK_FILES.slice(0, 6).map((f) => f.id)));
-  const [activeId, setActiveId] = useState<string | null>(MOCK_FILES[0]?.id ?? null);
+
+  /* ---- filesystem state: never seeded with demo data in the packaged app ---- */
+  const [files, setFiles] = useState<AppFile[]>(() => (tauri ? [] : MOCK_FILES));
+  const [root, setRoot] = useState<string>(() => (tauri ? "" : DEMO_ROOT));
+  const [folders, setFolders] = useState<FolderEntry[]>(() =>
+    tauri
+      ? []
+      : MOCK_FOLDERS.map((f) => ({ name: f.name, path: `${DEMO_ROOT}\\${f.name}`, files: f.count, bytes: f.bytes })),
+  );
+  const [styles, setStyles] = useState<Record<string, FolderStyle>>(() => (tauri ? {} : { ...DEMO_FOLDER_STYLES }));
+
+  const [selection, setSelection] = useState<Set<string>>(() =>
+    tauri ? new Set() : new Set(MOCK_FILES.slice(0, 6).map((f) => f.id)),
+  );
+  const [activeId, setActiveId] = useState<string | null>(tauri ? null : (MOCK_FILES[0]?.id ?? null));
+  const [recursive, setRecursive] = useState(true);
+  const [busy, setBusy] = useState(false);
+
   const [rule, setRule] = useState<ArrangeRule>(INITIAL_RULE);
   const [scope, setScope] = useState<"selected" | "all">("all");
+
   const [dupOptions, setDupOptions] = useState(DEFAULT_DUPLICATE_OPTIONS);
-  const [scanned, setScanned] = useState(true);
+  const [scanned, setScanned] = useState(!tauri);
+  const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [keepers, setKeepers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Set<string>>(new Set());
+
   const [renameOptions, setRenameOptions] = useState<RenameOptions>(DEFAULT_RENAME_OPTIONS);
-  const [styles, setStyles] = useState<Record<string, FolderStyle>>(DEMO_FOLDER_STYLES);
-  const [activeFolder, setActiveFolder] = useState<string>(MOCK_FOLDERS[0]?.name ?? "Inbox");
+  const [activeFolder, setActiveFolder] = useState<string>("");
   const [steps, setSteps] = useState<StyleStep[] | null>(null);
-  const [log, setLog] = useState<LogEntry[]>(DEMO_LOG);
+
+  const [log, setLog] = useState<LogEntry[]>(() => (tauri ? [] : DEMO_LOG));
   const [undoStack, setUndoStack] = useState<UndoRecord[]>([]);
-  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+
   const toastTimer = useRef<number | null>(null);
-  /** Local undo closures, keyed by undo-record id, applied after the disk revert. */
   const rollbacks = useRef(new Map<string, () => void>());
+
+  /* ---------------- feedback ---------------- */
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -101,13 +136,83 @@ export default function App() {
   }, []);
 
   const pushLog = useCallback((kind: LogKind, message: string, detail?: string) => {
-    setLog((prev) => [{ id: uid("log"), at: new Date().toISOString(), kind, message, detail }, ...prev].slice(0, 200));
+    setLog((prev) => [{ id: uid("log"), at: new Date().toISOString(), kind, message, detail }, ...prev].slice(0, 250));
   }, []);
 
   const pushUndo = useCallback((record: UndoRecord | null) => {
-    if (!record) return;
-    setUndoStack((prev) => [...prev, record].slice(-20));
+    if (record) setUndoStack((prev) => [...prev, record].slice(-20));
   }, []);
+
+  /* ---------------- scanning ---------------- */
+
+  const scanInto = useCallback(
+    async (path: string, silent = false) => {
+      setBusy(true);
+      try {
+        const result = await scanFolder(path, recursive);
+        setFiles(result.files);
+        setRoot(result.root);
+        setSelection(new Set());
+        setActiveId(result.files[0]?.id ?? null);
+        setPending(new Set());
+        setKeepers({});
+        setScanned(false);
+        setScannedAt(null);
+        setSteps(null);
+
+        const listed = await listFolders(result.root);
+        setFolders(listed);
+        setActiveFolder((current) => (listed.some((f) => f.name === current) ? current : (listed[0]?.name ?? "")));
+
+        try {
+          localStorage.setItem("arrangeit.lastRoot", result.root);
+        } catch {
+          /* ignore */
+        }
+
+        const bytes = result.files.reduce((sum, f) => sum + f.size, 0);
+        pushLog(
+          "scan",
+          `Scanned ${result.root.split("\\").pop() || result.root}`,
+          `${result.files.length} files · ${humanBytes(bytes)} · ${result.elapsedMs} ms${result.truncated ? " · truncated" : ""}`,
+        );
+        if (!silent) showToast(`Found ${result.files.length} files in ${result.elapsedMs} ms`);
+      } catch (error) {
+        pushLog("error", "Scan failed", String(error));
+        showToast("Could not read that folder", "error");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [pushLog, recursive, showToast],
+  );
+
+  // Resume the last folder on launch (desktop only) — the user never sees phantom files.
+  useEffect(() => {
+    if (!tauri) return;
+    let last = "";
+    try {
+      last = localStorage.getItem("arrangeit.lastRoot") ?? "";
+    } catch {
+      last = "";
+    }
+    if (last) void scanInto(last, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const chooseFolder = useCallback(async () => {
+    const picked = await pickFolder();
+    if (!picked) {
+      if (!tauri) showToast("Folder picking needs the desktop app — this is the browser demo.");
+      return;
+    }
+    await scanInto(picked);
+  }, [scanInto, showToast, tauri]);
+
+  const runScan = useCallback(() => {
+    if (root) void scanInto(root);
+    else void chooseFolder();
+  }, [chooseFolder, root, scanInto]);
 
   /* ---------------- derived plans ---------------- */
 
@@ -120,26 +225,35 @@ export default function App() {
     () => (scanned ? findDuplicates(files, dupOptions) : []),
     [files, dupOptions, scanned],
   );
-
   const renameRows = useMemo(() => applyRename(selectedFiles, renameOptions), [selectedFiles, renameOptions]);
 
   const activeFile = useMemo(() => files.find((f) => f.id === activeId) ?? null, [files, activeId]);
   const activeTarget = useMemo(() => items.find((i) => i.file.id === activeId)?.targetFolder, [items, activeId]);
+  const activeStyle = activeFolder ? styles[activeFolder] : undefined;
+  const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
 
-  const folders = useMemo(
-    () =>
-      [...new Set(files.map((f) => f.folder))]
-        .sort((a, b) => a.localeCompare(b))
-        .map((name) => {
-          const bucket = files.filter((f) => f.folder === name);
-          return { name, count: bucket.length, bytes: bucket.reduce((s, f) => s + f.size, 0) };
-        }),
-    [files],
-  );
+  // Give every discovered folder a style entry (and default colours).
+  useEffect(() => {
+    setStyles((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      folders.forEach((folder, index) => {
+        if (!next[folder.name]) {
+          next[folder.name] = {
+            folder: folder.name,
+            glyph: "folder",
+            color: FOLDER_COLORS[index % FOLDER_COLORS.length],
+            tooltip: "",
+            hideSystemFiles: true,
+          };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [folders]);
 
-  const activeStyle = styles[activeFolder];
-
-  /* ---------------- actions ---------------- */
+  /* ---------------- selection ---------------- */
 
   const toggle = useCallback((id: string) => {
     setSelection((prev) => {
@@ -154,54 +268,7 @@ export default function App() {
     setSelection((prev) => (prev.size === files.length ? new Set() : new Set(files.map((f) => f.id))));
   }, [files]);
 
-  const runScan = useCallback(async () => {
-    setBusy(true);
-    try {
-      const result = await scanFolder(root || DEMO_ROOT, true);
-      setFiles(result.files);
-      setRoot(result.root);
-      setSelection(new Set());
-      setPending(new Set());
-      setScanned(true);
-      setSteps(null);
-      const bytes = result.files.reduce((sum, f) => sum + f.size, 0);
-      pushLog("scan", `Scanned ${result.root.split("\\").pop() ?? result.root}`, `${result.files.length} files · ${humanBytes(bytes)} · ${result.elapsedMs} ms`);
-      showToast(`Scanned ${result.files.length} files in ${result.elapsedMs} ms`);
-    } catch (error) {
-      pushLog("error", "Scan failed", String(error));
-      showToast("Scan failed — check the folder permissions", "error");
-    } finally {
-      setBusy(false);
-    }
-  }, [pushLog, root, showToast]);
-
-  const chooseFolder = useCallback(async () => {
-    const picked = await pickFolder();
-    if (!picked) {
-      showToast(
-        isTauri()
-          ? "No folder chosen"
-          : "Folder picker needs the desktop build — the demo folder stays loaded.",
-      );
-      return;
-    }
-    setRoot(picked);
-    setBusy(true);
-    try {
-      const result = await scanFolder(picked, true);
-      setFiles(result.files);
-      setSelection(new Set());
-      setScanned(true);
-      const bytes = result.files.reduce((sum, f) => sum + f.size, 0);
-      pushLog("scan", `Scanned ${picked}`, `${result.files.length} files · ${humanBytes(bytes)}`);
-      showToast(`Loaded ${result.files.length} files from ${picked}`);
-    } catch (error) {
-      pushLog("error", "Scan failed", String(error));
-      showToast("Could not read that folder", "error");
-    } finally {
-      setBusy(false);
-    }
-  }, [pushLog, showToast]);
+  /* ---------------- actions ---------------- */
 
   const handleArrange = useCallback(async () => {
     if (items.length === 0) return;
@@ -211,6 +278,7 @@ export default function App() {
       const outcome = await executeArrange(items, rule.action, rule.dryRun, root);
       pushUndo(outcome.undo);
       if (outcome.undo) rollbacks.current.set(outcome.undo.id, () => setFiles(snapshot));
+
       if (rule.dryRun) {
         pushLog("arrange", `Dry run: ${items.length} files → ${summary.length} folders`, `${rule.mode} · ${rule.action}`);
         showToast(`Dry run — ${items.length} files would move into ${summary.length} folders`);
@@ -218,29 +286,27 @@ export default function App() {
         pushLog(
           "arrange",
           `${outcome.action === "move" ? "Moved" : "Copied"} ${outcome.performed} files into ${summary.length} folders`,
-          outcome.failures ? `${outcome.failures} skipped (name clash)` : undefined,
+          outcome.failures ? `${outcome.failures} skipped (name clash or missing)` : undefined,
         );
         const moves = new Map(items.filter((i) => i.status === "ok").map((i) => [i.file.id, i]));
         setFiles((prev) =>
           prev.map((file) => {
             const plan = moves.get(file.id);
             if (!plan) return file;
-            return {
-              ...file,
-              folder: plan.targetFolder,
-              path: `${root}\\${plan.targetFolder}\\${file.name}`,
-            };
+            return { ...file, folder: plan.targetFolder, path: `${root}\\${plan.targetFolder}\\${file.name}` };
           }),
         );
-        showToast(`${outcome.action === "move" ? "Moved" : "Copied"} ${outcome.performed} files — undo is available`);
+        const listed = await listFolders(root);
+        setFolders(listed);
+        showToast(`${outcome.action === "move" ? "Moved" : "Copied"} ${outcome.performed} files — Ctrl+Z to undo`);
       }
     } catch (error) {
       pushLog("error", "Arrange failed", String(error));
-      showToast("Arrange failed — see the activity log", "error");
+      showToast("Arrange failed — see Activity", "error");
     } finally {
       setBusy(false);
     }
-  }, [files, items, rule.action, rule.dryRun, rule.mode, root, pushLog, pushUndo, showToast, summary.length]);
+  }, [files, items, pushLog, pushUndo, root, rule.action, rule.dryRun, rule.mode, showToast, summary.length]);
 
   const togglePending = useCallback((fileId: string) => {
     setPending((prev) => {
@@ -250,6 +316,22 @@ export default function App() {
       return next;
     });
   }, []);
+
+  const runDuplicateScan = useCallback(() => {
+    if (!root) {
+      showToast("Choose a folder first", "error");
+      return;
+    }
+    setScanned(true);
+    setScannedAt(formatDate(new Date().toISOString(), true).split(" ").slice(-1)[0]);
+    const groups = findDuplicates(files, dupOptions);
+    pushLog(
+      "duplicate",
+      `Duplicate scan: ${groups.length} groups`,
+      `${humanBytes(groups.reduce((sum, g) => sum + g.reclaimable, 0))} reclaimable`,
+    );
+    showToast(`${groups.length} duplicate group${groups.length === 1 ? "" : "s"} found`);
+  }, [dupOptions, files, pushLog, root, showToast]);
 
   const selectAllExtras = useCallback(() => {
     const extras = duplicateGroups.flatMap((group) => {
@@ -264,12 +346,9 @@ export default function App() {
     if (targets.length === 0) return;
     setBusy(true);
     try {
-      const bytes = targets.reduce((sum, f) => sum + f.size, 0);
       const snapshot = files;
-      const outcome = await deleteDuplicates(
-        targets.map((f) => f.path),
-        bytes,
-      );
+      const bytes = targets.reduce((sum, f) => sum + f.size, 0);
+      const outcome = await deleteDuplicates(targets.map((f) => f.path), bytes);
       pushUndo(outcome.undo);
       if (outcome.undo) rollbacks.current.set(outcome.undo.id, () => setFiles(snapshot));
       setFiles((prev) => prev.filter((f) => !pending.has(f.id)));
@@ -280,7 +359,7 @@ export default function App() {
         return next;
       });
       pushLog("duplicate", `Recycled ${outcome.deleted} duplicates`, `${humanBytes(outcome.freed)} reclaimed`);
-      showToast(`Recycled ${outcome.deleted} files · ${humanBytes(outcome.freed)} reclaimed`);
+      showToast(`Recycled ${outcome.deleted} files · ${humanBytes(outcome.freed)} freed`);
     } catch (error) {
       pushLog("error", "Delete failed", String(error));
       showToast("Could not recycle those files", "error");
@@ -307,47 +386,76 @@ export default function App() {
         ),
       );
       pushLog("rename", `Renamed ${outcome.renamed} files`, renameOptions.pattern);
-      showToast(`Renamed ${outcome.renamed} files — press Ctrl+Z to undo`);
+      showToast(`Renamed ${outcome.renamed} files — Ctrl+Z to undo`);
     } catch (error) {
       pushLog("error", "Rename failed", String(error));
-      showToast("Rename failed — a target name may already exist", "error");
+      showToast("Rename failed — a target name may exist", "error");
     } finally {
       setBusy(false);
     }
-  }, [pushLog, pushUndo, renameOptions.pattern, renameRows, showToast]);
+  }, [files, pushLog, pushUndo, renameOptions, renameRows, showToast]);
 
-  const updateStyle = useCallback(
-    (folder: string, patch: Partial<FolderStyle>) => {
-      setStyles((prev) => ({
-        ...prev,
-        [folder]: {
-          ...(prev[folder] ?? { folder, glyph: "folder", color: "#f59e0b", tooltip: "", hideSystemFiles: true }),
-          ...patch,
-          folder,
-        },
-      }));
-      setSteps(null);
-    },
-    [],
-  );
+  const updateStyle = useCallback((folder: string, patch: Partial<FolderStyle>) => {
+    setStyles((prev) => {
+      const base = prev[folder] ?? {
+        folder,
+        glyph: "folder" as const,
+        color: FOLDER_COLORS[0],
+        tooltip: "",
+        hideSystemFiles: true,
+      };
+      return { ...prev, [folder]: { ...base, ...patch, folder } };
+    });
+    setSteps(null);
+  }, []);
 
   const handleApplyStyle = useCallback(async () => {
     if (!activeStyle) return;
+    if (!root) {
+      showToast("Choose a folder first", "error");
+      return;
+    }
     setBusy(true);
     try {
-      const outcome = await applyFolderStyle(activeStyle, root === DEMO_ROOT ? "C:\\Users\\Sam\\Desktop\\" : `${root}\\`, false);
+      const outcome = await applyFolderStyle(activeStyle, root.replace(/\\+$/, ""), false);
       setSteps(outcome.steps);
       pushUndo(outcome.undo);
       if (outcome.undo) rollbacks.current.set(outcome.undo.id, () => setSteps(null));
       pushLog("style", `Styled ${activeStyle.folder}`, outcome.steps.map((s) => s.command).join(" · "));
-      showToast(`${activeStyle.folder} now uses a custom icon — Explorer may need a refresh`);
+      const failed = outcome.steps.filter((s) => !s.ok);
+      if (failed.length > 0) {
+        showToast(`${failed.length} step${failed.length === 1 ? "" : "s"} failed — see the steps below`, "error");
+      } else {
+        showToast(`${activeStyle.folder} has a new icon — press F5 in Explorer if it lingers`);
+      }
     } catch (error) {
       pushLog("error", "Folder style failed", String(error));
-      showToast("Could not write desktop.ini", "error");
+      showToast(String(error), "error");
     } finally {
       setBusy(false);
     }
   }, [activeStyle, pushLog, pushUndo, root, showToast]);
+
+  const handleResetStyle = useCallback(async () => {
+    if (!activeFolder || !root) return;
+    setBusy(true);
+    try {
+      const result = await resetFolderStyle(root.replace(/\\+$/, ""), activeFolder);
+      setSteps(result);
+      pushLog("style", `Removed style from ${activeFolder}`, result.map((s) => s.command).join(" · "));
+      showToast(`${activeFolder} restored to the default folder look`);
+    } catch (error) {
+      pushLog("error", "Reset failed", String(error));
+      showToast("Could not remove the style", "error");
+    } finally {
+      setBusy(false);
+    }
+  }, [activeFolder, pushLog, root, showToast]);
+
+  const handleRefreshShell = useCallback(async () => {
+    const step = await refreshShell();
+    showToast(step.detail, step.ok ? "ok" : "error");
+  }, [showToast]);
 
   const handleUndo = useCallback(
     async (record?: UndoRecord) => {
@@ -355,7 +463,6 @@ export default function App() {
       if (!target) return;
       setBusy(true);
       try {
-        // Move everything back first, then restore the in-memory view.
         const ops = target.ops ?? [];
         const outcome = ops.length > 0 ? await revertFiles(ops) : { reverted: 0, failures: 0 };
         rollbacks.current.get(target.id)?.();
@@ -364,16 +471,12 @@ export default function App() {
         pushLog(
           "undo",
           `Undid: ${target.label}`,
-          outcome.reverted > 0
-            ? `${outcome.reverted} path${outcome.reverted === 1 ? "" : "s"} restored`
-            : "UI state restored — recycled files can be restored from the Recycle Bin",
+          outcome.reverted > 0 ? `${outcome.reverted} path(s) restored` : "UI state restored — recycled files sit in the Recycle Bin",
         );
-        showToast(
-          outcome.reverted > 0 ? `Undone — ${target.label}` : `Restored — ${target.label} (Recycle Bin holds the files)`,
-        );
+        showToast(outcome.reverted > 0 ? `Undone — ${target.label}` : `Restored — ${target.label}`);
       } catch (error) {
         pushLog("error", "Undo failed", String(error));
-        showToast("Undo failed — some files may have moved", "error");
+        showToast("Undo failed", "error");
       } finally {
         setBusy(false);
       }
@@ -381,32 +484,55 @@ export default function App() {
     [pushLog, showToast, undoStack],
   );
 
+  const exportPlan = useCallback(async () => {
+    const rows = [
+      ["file", "size_bytes", "source", "target_folder", "target_path"],
+      ...items.map((i) => [i.file.name, String(i.file.size), i.file.path, i.targetFolder, i.targetPath]),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const saved = await saveTextFile(`arrangeit-plan-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    if (saved) showToast("Plan exported");
+  }, [items, showToast]);
+
+  const exportRename = useCallback(async () => {
+    const rows = [["current", "proposed", "conflict"], ...renameRows.map((r) => [r.file.name, r.nextName, String(r.conflict)])];
+    const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const saved = await saveTextFile(`arrangeit-rename-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    if (saved) showToast("Rename plan exported");
+  }, [renameRows, showToast]);
+
   /* ---------------- keyboard ---------------- */
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
+    const onKey = (event: KeyboardEvent) => {
+      const el = event.target as HTMLElement | null;
       const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-      if (typing) return;
-      if (e.key >= "1" && e.key <= "5") {
-        setTab(TABS[Number(e.key) - 1].id);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        handleUndo();
-      } else if (e.key === "Enter" && tab === "arrange") {
+      if (typing) {
+        if (event.key === "Escape") (el as HTMLInputElement).blur();
+        return;
+      }
+      if (event.key === "/") {
+        event.preventDefault();
+        document.getElementById("file-search")?.focus();
+      } else if (event.key >= "1" && event.key <= "5") {
+        setTab(TABS[Number(event.key) - 1].id);
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        void handleUndo();
+      } else if (event.key === "Enter" && tab === "arrange") {
         void handleArrange();
+      } else if (event.key === "Escape") {
+        setSelection(new Set());
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [handleArrange, handleUndo, tab]);
 
-  const counts: Record<TabId, number> = {
-    arrange: 0,
+  const counts: Partial<Record<TabId, number>> = {
     duplicates: duplicateGroups.length,
     rename: renameRows.filter((r) => r.changed).length,
     folders: Object.values(styles).filter((s) => s.tooltip).length,
-    log: 0,
   };
 
   return (
@@ -416,7 +542,8 @@ export default function App() {
         setTab={setTab}
         counts={counts}
         root={root}
-        onPick={chooseFolder}
+        demo={!tauri}
+        onPick={() => void chooseFolder()}
         onScan={runScan}
         busy={busy}
         theme={theme}
@@ -427,30 +554,22 @@ export default function App() {
 
       <div className="workspace">
         <section className="panel" aria-label="Files">
-          <div className="panel-head">
-            <span className="panel-title">Files</span>
-            <span className="spacer" />
-            <Badge tone="accent">
-              {selection.size}/{files.length}
-            </Badge>
-            {busy ? <Spinner /> : null}
-          </div>
           <FileList
             files={files}
             selected={selection}
             activeId={activeId}
+            root={root}
+            busy={busy}
+            recursive={recursive}
+            demo={!tauri}
             onToggle={toggle}
             onActivate={setActiveId}
             onToggleAll={toggleAll}
-            counter={
-              <div className="row" style={{ padding: "6px 10px", borderBottom: "1px solid var(--line-soft)" }}>
-                <span className="hint tnum">
-                  {selectedFiles.length > 0 ? humanBytes(selectedFiles.reduce((s, f) => s + f.size, 0)) : "0 B"} selected
-                </span>
-                <span className="spacer" />
-                <span className="hint">Ctrl/⌘ click to multi-select</span>
-              </div>
-            }
+            onPick={() => void chooseFolder()}
+            onRecursiveChange={(value) => {
+              setRecursive(value);
+              if (root) void scanInto(root);
+            }}
           />
         </section>
 
@@ -462,8 +581,11 @@ export default function App() {
             summary={summary}
             scope={scope}
             setScope={setScope}
-            onApply={handleArrange}
+            onApply={() => void handleArrange()}
+            onExport={() => void exportPlan()}
             busy={busy}
+            presets={PRESETS}
+            onPreset={(preset) => setRule({ ...rule, ...preset.patch })}
           />
         ) : null}
 
@@ -477,14 +599,11 @@ export default function App() {
             pending={pending}
             onTogglePending={togglePending}
             onSelectAllButKeepers={selectAllExtras}
-            onDelete={handleDeleteDuplicates}
-            onScan={() => {
-              setScanned(true);
-              pushLog("duplicate", `Duplicate scan complete`, `${duplicateGroups.length} groups · ${humanBytes(duplicateGroups.reduce((s, g) => s + g.reclaimable, 0))} reclaimable`);
-              showToast(`${duplicateGroups.length} duplicate groups found`);
-            }}
+            onDelete={() => void handleDeleteDuplicates()}
+            onScan={runDuplicateScan}
             busy={busy}
             scanned={scanned}
+            scannedAt={scannedAt}
           />
         ) : null}
 
@@ -493,7 +612,8 @@ export default function App() {
             options={renameOptions}
             setOptions={setRenameOptions}
             rows={renameRows}
-            onApply={handleRename}
+            onApply={() => void handleRename()}
+            onExport={() => void exportRename()}
             busy={busy}
           />
         ) : null}
@@ -508,23 +628,51 @@ export default function App() {
               setSteps(null);
             }}
             update={updateStyle}
-            onApply={handleApplyStyle}
+            onApply={() => void handleApplyStyle()}
+            onReset={() => void handleResetStyle()}
+            onRefresh={() => void handleRefreshShell()}
             steps={steps}
             busy={busy}
-            root={`${root}\\"`}
+            root={`${root.replace(/\\+$/, "")}\\`}
+            canStyle={Boolean(root) && folders.length > 0}
           />
         ) : null}
 
-        {tab === "log" ? <LogTab entries={log} undoStack={undoStack} onUndo={(record) => void handleUndo(record)} theme={theme} setTheme={setTheme} /> : null}
+        {tab === "log" ? (
+          <LogTab
+            entries={log}
+            undoStack={undoStack}
+            onUndo={(record) => void handleUndo(record)}
+            onClear={() => setLog([])}
+          />
+        ) : null}
 
         <PreviewPane file={activeFile} targetFolder={activeTarget} onReveal={(path) => void revealInExplorer(path)} />
       </div>
+
+      <footer className="statusbar">
+        <span className="mode" data-live={tauri && Boolean(root)}>
+          {!tauri ? "Browser demo" : root ? "Live folder" : "No folder"}
+        </span>
+        <span>
+          {files.length} file{files.length === 1 ? "" : "s"} · {humanBytes(totalBytes)}
+        </span>
+        {selection.size > 0 ? <span>{selection.size} selected</span> : null}
+        <span className="spacer" />
+        {busy ? (
+          <span className="row" style={{ gap: 6 }}>
+            <Spinner /> working
+          </span>
+        ) : null}
+        <span className="mono">{rule.mode}</span>
+        <span>v1.1.0</span>
+      </footer>
 
       {toast ? (
         <div className="toast" data-kind={toast.kind} role="status">
           <span className="dot" aria-hidden="true" />
           <span>{toast.message}</span>
-          <button className="btn ghost tiny" onClick={() => setToast(null)} aria-label="Dismiss">
+          <button className="btn sm ghost" onClick={() => setToast(null)} aria-label="Dismiss">
             ✕
           </button>
         </div>

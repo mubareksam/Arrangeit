@@ -45,12 +45,7 @@ export function Segmented<T extends string>({
   return (
     <div className="segmented" role="group" aria-label={ariaLabel}>
       {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          aria-pressed={value === option.id}
-          onClick={() => onChange(option.id)}
-        >
+        <button key={option.id} type="button" aria-pressed={value === option.id} onClick={() => onChange(option.id)}>
           {option.label}
         </button>
       ))}
@@ -63,34 +58,27 @@ export function KindDot({ kind }: { kind: FileKind }) {
 }
 
 export function FileGlyph({ kind, children }: { kind: FileKind; children?: ReactNode }) {
-  const meta = KIND_CONFIG[kind];
   return (
-    <span
-      className="fileglyph"
-      style={{ color: meta.color, borderColor: `color-mix(in srgb, ${meta.color} 30%, var(--line))` }}
-      aria-hidden="true"
-    >
-      {children ?? meta.glyph}
+    <span className="fileglyph" style={{ color: KIND_CONFIG[kind].color }} aria-hidden="true">
+      {children ?? KIND_CONFIG[kind].glyph}
     </span>
   );
 }
 
-export function Stat({ value, label, tone }: { value: ReactNode; label: string; tone?: string }) {
-  return (
-    <div className="stat">
-      <div className="v" style={tone ? { color: tone } : undefined}>
-        {value}
-      </div>
-      <div className="k">{label}</div>
-    </div>
-  );
-}
-
-export function Empty({ title, hint }: { title: string; hint?: string }) {
+export function Empty({
+  title,
+  hint,
+  action,
+}: {
+  title: string;
+  hint?: string;
+  action?: ReactNode;
+}) {
   return (
     <div className="empty">
-      <div style={{ fontSize: 13, color: "var(--text-2)", fontWeight: 550 }}>{title}</div>
-      {hint ? <div className="hint" style={{ maxWidth: 320 }}>{hint}</div> : null}
+      <div className="empty-title">{title}</div>
+      {hint ? <div className="hint" style={{ maxWidth: 300 }}>{hint}</div> : null}
+      {action}
     </div>
   );
 }
@@ -105,5 +93,14 @@ export function SectionTitle({ children, right }: { children: ReactNode; right?:
       <span className="label">{children}</span>
       {right}
     </div>
+  );
+}
+
+export function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="field">
+      <span className="label">{label}</span>
+      {children}
+    </label>
   );
 }

@@ -36,6 +36,9 @@ pub struct UndoRecord {
     pub kind: String,
     pub label: String,
     pub entries: Vec<String>,
+    /// Machine-readable moves consumed by `revert_files`.
+    #[serde(default)]
+    pub ops: Vec<UndoOp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,7 +4,7 @@
 //! data if done naively. Every source is first moved to a unique temp name, then
 //! every temp is moved to its final name — so a swap like `a ↔ b` is safe.
 
-use crate::model::{sanitize_segment, UndoRecord};
+use crate::model::{sanitize_segment, UndoOp, UndoRecord};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,6 +34,7 @@ pub async fn rename_files(pairs: Vec<RenamePair>, dry_run: bool) -> Result<Renam
     let mut staged: Vec<(PathBuf, PathBuf, String)> = Vec::new();
     let mut errors = Vec::new();
     let mut undo_entries = Vec::new();
+    let mut undo_ops: Vec<UndoOp> = Vec::new();
 
     for (index, pair) in pairs.iter().enumerate() {
         let from = PathBuf::from(&pair.from);
@@ -55,6 +56,10 @@ pub async fn rename_files(pairs: Vec<RenamePair>, dry_run: bool) -> Result<Renam
             from.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
             clean
         ));
+        undo_ops.push(UndoOp {
+            from: from.to_string_lossy().to_string(),
+            to: to.to_string_lossy().to_string(),
+        });
         let temp = from.with_file_name(format!(".arrangeit-tmp-{index}"));
         staged.push((from, temp, clean));
     }
@@ -96,6 +101,7 @@ pub async fn rename_files(pairs: Vec<RenamePair>, dry_run: bool) -> Result<Renam
             kind: String::from("rename"),
             label: format!("Renamed {} file{}", renamed, if renamed == 1 { "" } else { "s" }),
             entries: undo_entries,
+            ops: undo_ops,
         })
     };
 

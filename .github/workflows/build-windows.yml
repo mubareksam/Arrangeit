@@ -50,19 +50,26 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: ArrangeIt 1.0.0 (Windows x64)
+          tag_name: v1.1.0
+          name: ArrangeIt 1.1.0 (Windows x64)
           body: |
-            **ArrangeIt 1.0.0** — local-first file organizer for Windows x64.
+            **ArrangeIt 1.1.0** — local-first file organizer for Windows x64.
 
-            Download `ArrangeIt_1.0.0_x64-setup.exe` below and run it. No Rust, Node or
-            other tools needed — the installer bundles the app.
+            Run `ArrangeIt_1.1.0_x64-setup.exe`. If 1.0.0 is already installed the
+            installer **upgrades it in place** (same app id and install folder — you will
+            not end up with two copies).
 
-            Features: auto-arrange (date / type / size / similarity / name / extension),
-            duplicate finder (SHA-256 + audio + image + fuzzy), batch rename,
-            folder styles via desktop.ini, preview pane, four themes.
+            **Fixed in this build**
+            - Folder styles actually apply: 16/32/48/256 px `.ico`, quoted `IconResource`,
+              `desktop.ini` attributes cleared before rewriting, `attrib +r/+s/+h`, cache flush.
+            - Real previews: images, video playback, audio playback with a waveform decoded
+              from the file (asset protocol enabled).
+            - The file list only ever shows files from the folder you picked — the demo
+              dataset is browser-only now, and the last folder is remembered.
+            - Undo now moves files back on disk (`revert_files`).
+            - `Remove style`, `Refresh Explorer` and CSV export added.
+            - Calmer interface: compact toolbar, one primary action per tab, 4 themes in a menu.
 
-            The binary is unsigned, so Windows SmartScreen may show
-            "More info → Run anyway" on first launch.
+            The binary is unsigned, so SmartScreen may ask for **More info → Run anyway**.
           files: src-tauri/target/release/bundle/nsis/*.exe
           fail_on_unmatched_files: true

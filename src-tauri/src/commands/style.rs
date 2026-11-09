@@ -1,14 +1,16 @@
 //! Folder styling through `desktop.ini`.
 //!
-//! Windows only renders a custom folder icon when three things line up:
-//!   1. `desktop.ini` exists inside the folder,
-//!   2. that file is marked hidden + system (`attrib +s +h`),
-//!   3. the folder itself is read-only/system so the shell keeps the metadata.
-//! Finally `ie4uinit.exe -show` flushes the icon cache, otherwise Explorer keeps
-//! showing the old folder until the next reboot.
+//! Getting Windows to actually show a custom folder icon needs four things, and
+//! skipping any one of them is why "folder styles" usually fails in the wild:
 //!
-//! The `.ico` is generated on the fly (folder silhouette + glyph) so users never
-//! have to hunt for an icon file.
+//!   1. a real multi-size **DIB** `.ico` (PNG-compressed icons are only honoured
+//!      at 256×256, so 16/32/48 px must be bitmap entries),
+//!   2. `desktop.ini` **inside** the folder with a *quoted* `IconResource`,
+//!   3. the ini marked `+s +h` **and** the folder marked `+r`,
+//!   4. the shell icon cache flushed (`ie4uinit.exe -show`).
+//!
+//! Re-applying a style also has to clear the old `+s +h` attributes first —
+//! otherwise the write fails with "access denied", which was the original bug.
 
 use crate::model::{FolderStyle, StyleStep, UndoRecord};
 use image::{ImageFormat, Rgba, RgbaImage};
@@ -17,12 +19,21 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+const MASTER: u32 = 256;
+const ICON_SIZES: [u32; 3] = [16, 32, 48];
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StyleOutcome {
     pub steps: Vec<StyleStep>,
     pub undo: Option<UndoRecord>,
+    /// Absolute path of the `.ico` that was written.
+    pub icon_path: String,
 }
+
+/* ------------------------------------------------------------------ */
+/* Icon rendering                                                      */
+/* ------------------------------------------------------------------ */
 
 fn parse_hex(color: &str) -> (u8, u8, u8) {
     let hex = color.trim_start_matches('#');
@@ -38,19 +49,17 @@ fn parse_hex(color: &str) -> (u8, u8, u8) {
     (240, 160, 60)
 }
 
-fn in_rounded_rect(x: i32, y: i32, x0: i32, y0: i32, x1: i32, y1: i32, r: i32) -> bool {
-    if x < x0 || x > x1 || y < y0 || y > y1 {
+fn in_rounded_rect(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> bool {
+    if px < x0 || px > x1 || py < y0 || py > y1 {
         return false;
     }
-    let cx = if x < x0 + r { x0 + r } else if x > x1 - r { x1 - r } else { x };
-    let cy = if y < y0 + r { y0 + r } else if y > y1 - r { y1 - r } else { y };
-    let dx = (x - cx) as f32;
-    let dy = (y - cy) as f32;
-    dx * dx + dy * dy <= (r * r) as f32
+    let cx = px.clamp(x0 + r, x1 - r);
+    let cy = py.clamp(y0 + r, y1 - r);
+    (px - cx).powi(2) + (py - cy).powi(2) <= r * r
 }
 
-fn in_circle(x: f32, y: f32, cx: f32, cy: f32, r: f32) -> bool {
-    (x - cx).powi(2) + (y - cy).powi(2) <= r * r
+fn in_circle(px: f32, py: f32, cx: f32, cy: f32, r: f32) -> bool {
+    (px - cx).powi(2) + (py - cy).powi(2) <= r * r
 }
 
 fn in_polygon(px: f32, py: f32, points: &[(f32, f32)]) -> bool {
@@ -69,107 +78,195 @@ fn in_polygon(px: f32, py: f32, points: &[(f32, f32)]) -> bool {
 }
 
 fn star_points(cx: f32, cy: f32, outer: f32, inner: f32) -> Vec<(f32, f32)> {
-    let mut points = Vec::with_capacity(10);
-    for i in 0..10 {
-        let radius = if i % 2 == 0 { outer } else { inner };
-        let angle = -std::f32::consts::FRAC_PI_2 + (i as f32) * std::f32::consts::PI / 5.0;
-        points.push((cx + radius * angle.cos(), cy + radius * angle.sin()));
-    }
-    points
+    (0..10)
+        .map(|i| {
+            let radius = if i % 2 == 0 { outer } else { inner };
+            let angle = -std::f32::consts::FRAC_PI_2 + (i as f32) * std::f32::consts::PI / 5.0;
+            (cx + radius * angle.cos(), cy + radius * angle.sin())
+        })
+        .collect()
 }
 
-/// 64×64 RGBA folder icon tinted with the folder accent colour.
-fn render_icon(color: &str, glyph: &str) -> RgbaImage {
-    let (r, g, b) = parse_hex(color);
-    let mut img = RgbaImage::from_pixel(64, 64, Rgba([0, 0, 0, 0]));
-
-    // Folder body + tab.
-    for y in 0..64i32 {
-        for x in 0..64i32 {
-            let tab = in_rounded_rect(x, y, 8, 12, 30, 22, 3);
-            let body = in_rounded_rect(x, y, 8, 18, 56, 52, 7);
-            if tab || body {
-                let shade = if y < 20 { 1.14 } else { 1.0 };
-                let (rr, gg, bb) = if y > 44 {
-                    ((r as f32 * 0.82) as u8, (g as f32 * 0.82) as u8, (b as f32 * 0.82) as u8)
-                } else {
-                    (
-                        ((r as f32 * shade).min(255.0)) as u8,
-                        ((g as f32 * shade).min(255.0)) as u8,
-                        ((b as f32 * shade).min(255.0)) as u8,
-                    )
-                };
-                img.put_pixel(x as u32, y as u32, Rgba([rr, gg, bb, 255]));
-            }
+fn glyph_hit(glyph: &str, x: f32, y: f32) -> bool {
+    let star = star_points(32.0, 36.0, 15.0, 6.2);
+    match glyph {
+        "star" => in_polygon(x, y, &star),
+        "film" => in_polygon(x, y, &[(24.0, 26.0), (24.0, 48.0), (42.0, 37.0)]),
+        "book" => in_rounded_rect(x, y, 24.0, 26.0, 31.0, 48.0, 1.0) || in_rounded_rect(x, y, 33.0, 26.0, 40.0, 48.0, 1.0),
+        "music" => {
+            in_circle(x, y, 24.0, 45.0, 5.0)
+                || in_circle(x, y, 38.0, 41.0, 5.0)
+                || in_rounded_rect(x, y, 37.0, 24.0, 41.0, 42.0, 1.0)
+                || in_rounded_rect(x, y, 23.0, 28.0, 27.0, 46.0, 1.0)
+                || in_rounded_rect(x, y, 25.0, 25.0, 41.0, 30.0, 2.0)
         }
+        "camera" => {
+            (in_circle(x, y, 32.0, 37.0, 9.0) && !in_circle(x, y, 32.0, 37.0, 4.2))
+                || in_rounded_rect(x, y, 26.0, 22.0, 38.0, 27.0, 2.0)
+        }
+        "briefcase" => in_rounded_rect(x, y, 22.0, 28.0, 42.0, 46.0, 3.0) || in_rounded_rect(x, y, 28.0, 23.0, 36.0, 29.0, 2.0),
+        "flask" => in_polygon(x, y, &[(27.0, 25.0), (37.0, 25.0), (44.0, 48.0), (20.0, 48.0)]),
+        _ => false,
     }
+}
 
-    // Glyph, drawn in white on the body.
-    let white = Rgba([255, 255, 255, 235]);
-    let cx = 32.0f32;
-    let cy = 36.0f32;
-    let star = star_points(cx, cy, 15.0, 6.2);
-    let triangle = [(24.0f32, 26.0f32), (24.0, 48.0), (42.0, 37.0)];
+/// Renders at 256 px in "64-unit" design space, then downsamples — this keeps
+/// small sizes smooth instead of jagged.
+fn render_master(color: &str, glyph: &str) -> RgbaImage {
+    let (r, g, b) = parse_hex(color);
+    let mut img = RgbaImage::new(MASTER, MASTER);
+    let scale = MASTER as f32 / 64.0;
 
-    for y in 0..64 {
-        for x in 0..64 {
-            let fx = x as f32;
-            let fy = y as f32;
-            let body = in_rounded_rect(x as i32, y as i32, 8, 18, 56, 52, 7);
-            if !body {
+    for py in 0..MASTER {
+        for px in 0..MASTER {
+            let x = px as f32 / scale;
+            let y = py as f32 / scale;
+
+            let tab = in_rounded_rect(x, y, 8.0, 12.0, 30.0, 22.0, 3.0);
+            let body = in_rounded_rect(x, y, 8.0, 18.0, 56.0, 52.0, 7.0);
+
+            if !tab && !body {
+                img.put_pixel(px, py, Rgba([0, 0, 0, 0]));
                 continue;
             }
-            let hit = match glyph {
-                "star" => in_polygon(fx, fy, &star),
-                "film" => in_polygon(fx, fy, &triangle),
-                "book" => in_rounded_rect(x as i32, y as i32, 24, 26, 31, 48, 1) || in_rounded_rect(x as i32, y as i32, 33, 26, 40, 48, 1),
-                "music" => {
-                    in_circle(fx, fy, 24.0, 45.0, 5.0)
-                        || in_circle(fx, fy, 38.0, 41.0, 5.0)
-                        || in_rounded_rect(x as i32, y as i32, 37, 24, 41, 42, 1)
-                        || in_rounded_rect(x as i32, y as i32, 23, 28, 27, 46, 1)
-                        || in_rounded_rect(x as i32, y as i32, 25, 25, 41, 30, 2)
-                }
-                "camera" => {
-                    (in_circle(fx, fy, cx, cy + 1.0, 9.0) && !in_circle(fx, fy, cx, cy + 1.0, 4.2))
-                        || in_rounded_rect(x as i32, y as i32, 26, 22, 38, 27, 2)
-                }
-                "briefcase" => {
-                    in_rounded_rect(x as i32, y as i32, 22, 28, 42, 46, 3)
-                        || in_rounded_rect(x as i32, y as i32, 28, 23, 36, 29, 2)
-                }
-                "flask" => in_polygon(fx, fy, &[(27.0, 25.0), (37.0, 25.0), (44.0, 48.0), (20.0, 48.0)]),
-                _ => false,
+
+            // Tab is a touch lighter, the lower body a touch darker → depth.
+            let factor = if y < 20.0 {
+                1.16
+            } else if y > 44.0 {
+                0.82
+            } else {
+                1.0
             };
-            if hit {
-                img.put_pixel(x, y, white);
-            }
+            let rr = (r as f32 * factor).min(255.0) as u8;
+            let gg = (g as f32 * factor).min(255.0) as u8;
+            let bb = (b as f32 * factor).min(255.0) as u8;
+
+            let pixel = if body && glyph_hit(glyph, x, y) {
+                Rgba([255, 255, 255, 245])
+            } else {
+                Rgba([rr, gg, bb, 255])
+            };
+            img.put_pixel(px, py, pixel);
         }
     }
-
     img
 }
 
-fn ico_bytes(img: &RgbaImage) -> Result<Vec<u8>, String> {
+fn downsample(src: &RgbaImage, size: u32) -> RgbaImage {
+    let mut out = RgbaImage::new(size, size);
+    let ratio = src.width() as f32 / size as f32;
+    for y in 0..size {
+        for x in 0..size {
+            let x0 = (x as f32 * ratio).floor() as u32;
+            let y0 = (y as f32 * ratio).floor() as u32;
+            let x1 = (((x + 1) as f32 * ratio).ceil() as u32).min(src.width());
+            let y1 = (((y + 1) as f32 * ratio).ceil() as u32).min(src.height());
+            let mut acc = [0f32; 4];
+            let mut count = 0f32;
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let p = src.get_pixel(sx, sy).0;
+                    let alpha = p[3] as f32 / 255.0;
+                    acc[0] += p[0] as f32 * alpha;
+                    acc[1] += p[1] as f32 * alpha;
+                    acc[2] += p[2] as f32 * alpha;
+                    acc[3] += p[3] as f32;
+                    count += 1.0;
+                }
+            }
+            if count == 0.0 {
+                continue;
+            }
+            let alpha = acc[3] / count;
+            let unpremul = if alpha > 0.0 { 255.0 / alpha } else { 0.0 };
+            out.put_pixel(
+                x,
+                y,
+                Rgba([
+                    (acc[0] / count * unpremul).min(255.0) as u8,
+                    (acc[1] / count * unpremul).min(255.0) as u8,
+                    (acc[2] / count * unpremul).min(255.0) as u8,
+                    alpha as u8,
+                ]),
+            );
+        }
+    }
+    out
+}
+
+/// BITMAPINFOHEADER + 32-bit BGRA (bottom-up) + 1bpp AND mask = a valid DIB icon.
+fn dib_for(img: &RgbaImage) -> Vec<u8> {
+    let size = img.width();
+    let mask_row = ((size + 31) / 32) * 4;
+    let xor_len = (size * size * 4) as usize;
+    let and_len = (mask_row * size) as usize;
+    let mut out = Vec::with_capacity(40 + xor_len + and_len);
+
+    out.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    out.extend_from_slice(&(size as i32).to_le_bytes()); // biWidth
+    out.extend_from_slice(&((size as i32) * 2).to_le_bytes()); // biHeight (XOR + AND)
+    out.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    out.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    out.extend_from_slice(&0u32.to_le_bytes()); // BI_RGB
+    out.extend_from_slice(&(xor_len as u32).to_le_bytes());
+    out.extend_from_slice(&[0u8; 16]); // ppm + colours
+
+    for y in (0..size).rev() {
+        for x in 0..size {
+            let p = img.get_pixel(x, y).0;
+            out.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+        }
+    }
+    out.resize(out.len() + and_len, 0);
+    out
+}
+
+fn png_for(img: &RgbaImage) -> Result<Vec<u8>, String> {
     let mut png = Vec::new();
     img.write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
         .map_err(|e| format!("PNG encode failed: {e}"))?;
+    Ok(png)
+}
 
-    let mut ico = Vec::with_capacity(png.len() + 22);
+fn ico_bytes(entries: &[(u32, Vec<u8>)]) -> Vec<u8> {
+    let mut ico = Vec::new();
     ico.extend_from_slice(&[0, 0]); // reserved
     ico.extend_from_slice(&[1, 0]); // type: icon
-    ico.extend_from_slice(&[1, 0]); // image count
-    ico.push(64); // width
-    ico.push(64); // height
-    ico.push(0); // palette size
-    ico.push(0); // reserved
-    ico.extend_from_slice(&[1, 0]); // colour planes
-    ico.extend_from_slice(&[32, 0]); // bits per pixel
-    ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
-    ico.extend_from_slice(&22u32.to_le_bytes()); // data offset
-    ico.extend_from_slice(&png);
-    Ok(ico)
+    ico.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+
+    let mut offset = 6 + 16 * entries.len() as u32;
+    for (size, data) in entries {
+        ico.push(if *size >= 256 { 0 } else { *size as u8 });
+        ico.push(if *size >= 256 { 0 } else { *size as u8 });
+        ico.push(0); // palette
+        ico.push(0); // reserved
+        ico.extend_from_slice(&1u16.to_le_bytes()); // planes
+        ico.extend_from_slice(&32u16.to_le_bytes()); // bpp
+        ico.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&offset.to_le_bytes());
+        offset += data.len() as u32;
+    }
+    for (_, data) in entries {
+        ico.extend_from_slice(data);
+    }
+    ico
 }
+
+/// Builds a 16/32/48/256 icon. Small sizes are DIB, 256 is PNG (allowed by Windows).
+fn build_ico(color: &str, glyph: &str) -> Result<Vec<u8>, String> {
+    let master = render_master(color, glyph);
+    let mut entries: Vec<(u32, Vec<u8>)> = Vec::new();
+    for size in ICON_SIZES {
+        entries.push((size, dib_for(&downsample(&master, size))));
+    }
+    entries.push((256, png_for(&master)?));
+    Ok(ico_bytes(&entries))
+}
+
+/* ------------------------------------------------------------------ */
+/* Filesystem + shell helpers                                          */
+/* ------------------------------------------------------------------ */
 
 fn icon_dir() -> PathBuf {
     dirs::data_dir()
@@ -179,10 +276,25 @@ fn icon_dir() -> PathBuf {
 }
 
 fn desktop_ini(style: &FolderStyle, icon: &Path) -> String {
-    let tooltip = if style.tooltip.is_empty() { format!("ArrangeIt · {}", style.folder) } else { style.tooltip.clone() };
+    let tooltip = if style.tooltip.is_empty() {
+        format!("ArrangeIt · {}", style.folder)
+    } else {
+        style.tooltip.clone()
+    };
     let icon = icon.to_string_lossy();
     format!(
-        "[.ShellClassInfo]\r\nInfoTip={tooltip}\r\nIconResource={icon},0\r\nIconFile={icon}\r\nIconIndex=0\r\nConfirmFileOp=0\r\n\r\n[ViewState]\r\nMode=\r\nVid=\r\nFolderType=Documents\r\n"
+        "[.ShellClassInfo]\r\n\
+         ConfirmFileOp=0\r\n\
+         NoSharing=1\r\n\
+         IconFile={icon}\r\n\
+         IconIndex=0\r\n\
+         InfoTip={tooltip}\r\n\
+         IconResource=\"{icon}\",0\r\n\
+         \r\n\
+         [ViewState]\r\n\
+         Mode=\r\n\
+         Vid=\r\n\
+         FolderType=Documents\r\n"
     )
 }
 
@@ -205,7 +317,14 @@ fn attrib(args: &[&str]) -> bool {
     }
 }
 
-fn refresh_icon_cache() -> bool {
+fn set_attributes(flags: &[&str], path: &Path) -> bool {
+    let owned = path.to_string_lossy().to_string();
+    let mut args: Vec<&str> = flags.to_vec();
+    args.push(owned.as_str());
+    attrib(&args)
+}
+
+pub fn refresh_icon_cache() -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -223,26 +342,29 @@ fn refresh_icon_cache() -> bool {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Commands                                                            */
+/* ------------------------------------------------------------------ */
+
 #[tauri::command]
 pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool) -> Result<StyleOutcome, String> {
     let folder = Path::new(&root).join(&style.folder);
-    if !folder.exists() {
+    if !folder.is_dir() {
         return Err(format!("Folder not found: {}", folder.display()));
     }
 
     let mut steps: Vec<StyleStep> = Vec::new();
 
-    // 1. Materialise the .ico.
+    // 1 — the icon itself.
     let icon_path = match &style.icon_path {
-        Some(custom) if Path::new(custom).exists() => PathBuf::from(custom),
+        Some(custom) if Path::new(custom).is_file() => PathBuf::from(custom),
         _ => {
             let dir = icon_dir();
             let file = dir.join(format!("{}-{}.ico", style.glyph, style.color.trim_start_matches('#')));
             if !dry_run {
                 fs::create_dir_all(&dir).map_err(|e| format!("Cannot create icon cache: {e}"))?;
-                let image = render_icon(&style.color, &style.glyph);
-                let bytes = ico_bytes(&image)?;
-                fs::write(&file, bytes).map_err(|e| format!("Cannot write icon: {e}"))?;
+                fs::write(&file, build_ico(&style.color, &style.glyph)?)
+                    .map_err(|e| format!("Cannot write icon: {e}"))?;
             }
             file
         }
@@ -250,48 +372,56 @@ pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool)
     steps.push(StyleStep {
         command: format!("icon → {}", icon_path.display()),
         ok: true,
-        detail: format!("64×64 {} glyph in {}", style.glyph, style.color),
+        detail: format!("16/32/48/256 px {} glyph in {}", style.glyph, style.color),
     });
 
-    // 2. desktop.ini.
+    // 2 — clear stale attributes, then write desktop.ini. This is the step that
+    // used to fail with "access denied" on a second apply.
     let ini = folder.join("desktop.ini");
     if !dry_run {
-        fs::write(&ini, desktop_ini(&style, &icon_path)).map_err(|e| format!("Cannot write desktop.ini: {e}"))?;
+        if ini.exists() {
+            set_attributes(&["-s", "-h", "-r"], &ini);
+        }
+        fs::write(&ini, desktop_ini(&style, &icon_path))
+            .map_err(|e| format!("Cannot write desktop.ini: {e}"))?;
     }
+    let written = dry_run || fs::read_to_string(&ini).map(|t| t.contains("IconResource")).unwrap_or(false);
     steps.push(StyleStep {
         command: format!("write {}", ini.display()),
-        ok: true,
-        detail: String::from("InfoTip + IconResource + ViewState"),
+        ok: written,
+        detail: if written {
+            String::from("IconResource verified in desktop.ini")
+        } else {
+            String::from("desktop.ini was written but could not be read back")
+        },
     });
 
-    // 3. Attributes: folder read-only, ini hidden + system.
-    let folder_owned = folder.to_string_lossy().to_string();
-    let folder_attr = attrib(&["+r", folder_owned.as_str()]);
+    // 3 — folder read-only, ini hidden + system.
+    let folder_ok = dry_run || set_attributes(&["+r"], &folder);
     steps.push(StyleStep {
         command: format!("attrib +r \"{}\"", folder.display()),
-        ok: folder_attr,
-        detail: String::from("Lets the shell honour the folder metadata"),
+        ok: folder_ok,
+        detail: String::from("Required for the shell to honour folder metadata"),
     });
 
-    let ini_owned = ini.to_string_lossy().to_string();
     let ini_ok = if !style.hide_system_files {
         true
     } else if dry_run {
         true
     } else {
-        attrib(&["+s", ini_owned.as_str()]) && attrib(&["+h", ini_owned.as_str()])
+        set_attributes(&["+s"], &ini) && set_attributes(&["+h"], &ini)
     };
     steps.push(StyleStep {
         command: format!("attrib +s +h \"{}\"", ini.display()),
         ok: ini_ok,
         detail: if style.hide_system_files {
-            String::from("desktop.ini hidden + system, so Explorer stays tidy")
+            String::from("desktop.ini hidden + system")
         } else {
             String::from("Skipped — hide desktop.ini is off")
         },
     });
 
-    // 4. Icon cache flush.
+    // 4 — cache flush.
     let refreshed = if dry_run { true } else { refresh_icon_cache() };
     steps.push(StyleStep {
         command: String::from("ie4uinit.exe -show"),
@@ -310,30 +440,52 @@ pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool)
                 format!("remove {}", ini.display()),
                 format!("attrib -r \"{}\"", folder.display()),
             ],
+            ops: Vec::new(),
         })
     };
 
-    Ok(StyleOutcome { steps, undo })
+    Ok(StyleOutcome { steps, undo, icon_path: icon_path.to_string_lossy().to_string() })
 }
 
+/// Removes a custom folder icon and restores Windows' default folder look.
 #[tauri::command]
-pub async fn reveal_in_explorer(path: String) -> Result<(), String> {
-    let target = PathBuf::from(&path);
-    #[cfg(windows)]
-    {
-        std::process::Command::new("explorer")
-            .arg(format!("/select,{}", target.display()))
-            .spawn()
-            .map_err(|e| e.to_string())?;
+pub async fn reset_folder_style(root: String, folder: String) -> Result<Vec<StyleStep>, String> {
+    let target = Path::new(&root).join(&folder);
+    if !target.is_dir() {
+        return Err(format!("Folder not found: {}", target.display()));
     }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").args(["-R", &path]).spawn().map_err(|e| e.to_string())?;
+    let ini = target.join("desktop.ini");
+    let mut steps = Vec::new();
+
+    if ini.exists() {
+        set_attributes(&["-s", "-h", "-r"], &ini);
+        fs::remove_file(&ini).map_err(|e| format!("Cannot remove desktop.ini: {e}"))?;
+        steps.push(StyleStep {
+            command: format!("remove {}", ini.display()),
+            ok: true,
+            detail: String::from("desktop.ini deleted"),
+        });
+    } else {
+        steps.push(StyleStep {
+            command: String::from("desktop.ini"),
+            ok: true,
+            detail: String::from("No desktop.ini — folder already looked default"),
+        });
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let dir = target.parent().unwrap_or(Path::new(".")).to_path_buf();
-        std::process::Command::new("xdg-open").arg(dir).spawn().map_err(|e| e.to_string())?;
-    }
-    Ok(())
+
+    let ok = set_attributes(&["-r"], &target);
+    steps.push(StyleStep {
+        command: format!("attrib -r \"{}\"", target.display()),
+        ok,
+        detail: String::from("Folder no longer read-only"),
+    });
+
+    let refreshed = refresh_icon_cache();
+    steps.push(StyleStep {
+        command: String::from("ie4uinit.exe -show"),
+        ok: refreshed,
+        detail: String::from("Icon cache flushed"),
+    });
+
+    Ok(steps)
 }

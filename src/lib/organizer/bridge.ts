@@ -1,9 +1,10 @@
 /**
- * Thin bridge between the planner and the native layer.
+ * Bridge between the planner and the native layer.
  *
- * In the Tauri webview every call is forwarded to a Rust command. In a plain
- * browser (`npm run dev`) the same call is simulated against the demo dataset so
- * the whole UI stays clickable without a build step.
+ * Every function here is a thin wrapper over a Rust command. When the app runs in
+ * a plain browser (`npm run dev`) the same call is answered from the demo dataset —
+ * but only there. In the packaged app there is **no mock fallback**: if the disk
+ * says a folder is empty, the UI shows an empty folder.
  */
 
 import type {
@@ -16,11 +17,19 @@ import type {
   UndoOp,
   UndoRecord,
 } from "./types";
-import { MOCK_FILES } from "./mockData";
+import { MOCK_FILES, MOCK_FOLDERS } from "./mockData";
 import { humanBytes, styleSteps, uid } from "./engine";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** Local file URL that the webview is allowed to load (asset protocol). */
+export function assetUrl(path: string): string {
+  if (!isTauri() || !path) return "";
+  const internals = (window as unknown as { __TAURI_INTERNALS__: { convertFileSrc: (p: string) => string } })
+    .__TAURI_INTERNALS__;
+  return internals.convertFileSrc(path);
 }
 
 async function invokeTauri<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -44,20 +53,41 @@ export interface ScanResult {
 export async function scanFolder(path: string, recursive = true): Promise<ScanResult> {
   const started = performance.now();
   if (isTauri()) {
+    // No fallback: whatever the disk returns is what the user sees.
     const result = await invokeTauri<{ files: AppFile[]; root: string; truncated: boolean }>("scan_folder", {
       path,
       recursive,
     });
     return { ...result, elapsedMs: Math.round(performance.now() - started) };
   }
-  await wait(420);
-  const files = path && path !== "DEMO" ? MOCK_FILES : MOCK_FILES;
+  await wait(380);
   return {
-    files: files.map((f) => ({ ...f })),
+    files: MOCK_FILES.map((f) => ({ ...f })),
     root: "C:\\Users\\Sam\\Desktop",
     elapsedMs: Math.round(performance.now() - started),
     truncated: false,
   };
+}
+
+export interface FolderEntry {
+  name: string;
+  path: string;
+  files: number;
+  bytes: number;
+}
+
+/** Immediate sub-folders, including empty ones (used by Folder styles). */
+export async function listFolders(path: string): Promise<FolderEntry[]> {
+  if (isTauri()) {
+    return invokeTauri<FolderEntry[]>("list_folders", { path });
+  }
+  await wait(120);
+  return MOCK_FOLDERS.map((folder) => ({
+    name: folder.name,
+    path: `C:\\Users\\Sam\\Desktop\\${folder.name}`,
+    files: folder.count,
+    bytes: folder.bytes,
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -81,14 +111,13 @@ export async function executeArrange(
   if (isTauri()) {
     return invokeTauri<ArrangeOutcome>("execute_arrange", { items, action, dryRun, root });
   }
-  await wait(dryRun ? 120 : 520);
+  await wait(dryRun ? 120 : 480);
   const usable = items.filter((i) => i.status === "ok");
-  const entries = usable.map((i) => `${i.file.name}  →  ${i.targetFolder}\\`);
   return {
     action,
     performed: dryRun ? 0 : usable.length,
     failures: items.length - usable.length,
-    entries,
+    entries: usable.map((i) => `${i.file.name}  →  ${i.targetFolder}\\`),
     undo:
       dryRun || usable.length === 0
         ? null
@@ -120,7 +149,7 @@ export async function deleteDuplicates(paths: string[], totalBytes: number, toRe
   if (isTauri()) {
     return invokeTauri<DeleteOutcome>("delete_duplicates", { paths, toRecycleBin });
   }
-  await wait(380);
+  await wait(340);
   const names = paths.map((p) => p.split("\\").pop() ?? p);
   return {
     deleted: paths.length,
@@ -134,6 +163,7 @@ export async function deleteDuplicates(paths: string[], totalBytes: number, toRe
             kind: "duplicate",
             label: `Recycled ${paths.length} duplicate${paths.length === 1 ? "" : "s"} (${humanBytes(totalBytes)})`,
             entries: names,
+            ops: [],
           },
   };
 }
@@ -157,7 +187,7 @@ export async function commitRename(rows: RenameRow[], dryRun: boolean): Promise<
       dryRun,
     });
   }
-  await wait(dryRun ? 100 : 460);
+  await wait(dryRun ? 100 : 420);
   return {
     renamed: dryRun ? 0 : ready.length,
     failures: rows.length - ready.length,
@@ -185,15 +215,17 @@ export async function commitRename(rows: RenameRow[], dryRun: boolean): Promise<
 export interface StyleOutcome {
   steps: StyleStep[];
   undo: UndoRecord | null;
+  iconPath?: string;
 }
 
 export async function applyFolderStyle(style: FolderStyle, root: string, dryRun: boolean): Promise<StyleOutcome> {
   if (isTauri()) {
     return invokeTauri<StyleOutcome>("apply_folder_style", { style, root, dryRun });
   }
-  await wait(dryRun ? 140 : 420);
+  await wait(dryRun ? 120 : 380);
   return {
-    steps: styleSteps(style, root).map((s) => (dryRun ? s : { ...s, ok: true })),
+    steps: styleSteps(style, root),
+    iconPath: `${root}\\${style.folder}\\desktop.ini`,
     undo: dryRun
       ? null
       : {
@@ -201,14 +233,35 @@ export async function applyFolderStyle(style: FolderStyle, root: string, dryRun:
           kind: "style",
           label: `Styled ${style.folder}`,
           entries: [`remove ${root}${style.folder}\\desktop.ini`, `attrib -r "${root}${style.folder}"`],
+          ops: [],
         },
   };
 }
 
-/**
- * Reverts a recorded operation by moving every `to` back to its `from`.
- * Used by the undo button for arrange + rename runs.
- */
+export async function resetFolderStyle(root: string, folder: string): Promise<StyleStep[]> {
+  if (isTauri()) {
+    return invokeTauri<StyleStep[]>("reset_folder_style", { root, folder });
+  }
+  await wait(220);
+  return [
+    { command: `remove ${root}${folder}\\desktop.ini`, ok: true, detail: "desktop.ini deleted" },
+    { command: `attrib -r "${root}${folder}"`, ok: true, detail: "Folder no longer read-only" },
+    { command: "ie4uinit.exe -show", ok: true, detail: "Icon cache flushed" },
+  ];
+}
+
+export async function refreshShell(): Promise<StyleStep> {
+  if (isTauri()) {
+    return invokeTauri<StyleStep>("refresh_shell");
+  }
+  await wait(160);
+  return { command: "ie4uinit.exe -show", ok: true, detail: "Explorer icon cache flushed" };
+}
+
+/* ------------------------------------------------------------------ */
+/* Undo                                                                */
+/* ------------------------------------------------------------------ */
+
 export interface RevertOutcome {
   reverted: number;
   failures: number;
@@ -219,7 +272,7 @@ export async function revertFiles(ops: UndoOp[]): Promise<RevertOutcome> {
   if (isTauri()) {
     return invokeTauri<RevertOutcome>("revert_files", { ops });
   }
-  await wait(260);
+  await wait(240);
   return { reverted: ops.length, failures: 0 };
 }
 
@@ -243,6 +296,33 @@ export async function revealInExplorer(path: string): Promise<void> {
   try {
     await invokeTauri<void>("reveal_in_explorer", { path });
   } catch {
-    /* opening Explorer is best-effort */
+    /* best effort */
   }
+}
+
+/** Saves an exported plan (CSV/JSON) — native save dialog, or a download in the browser. */
+export async function saveTextFile(defaultName: string, contents: string, extension = "csv"): Promise<boolean> {
+  if (isTauri()) {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const target = await save({
+        title: "Save report",
+        defaultPath: defaultName,
+        filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+      });
+      if (!target) return false;
+      await invokeTauri<void>("write_text_file", { path: target, contents });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  const blob = new Blob([contents], { type: extension === "csv" ? "text/csv" : "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = defaultName;
+  link.click();
+  URL.revokeObjectURL(url);
+  return true;
 }
