@@ -4,6 +4,10 @@
 
 Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript** for the UI. Nothing leaves your machine.
 
+> ### ⬇ [Download ArrangeIt 1.0.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.0.0/ArrangeIt_1.0.0_x64-setup.exe)
+> Run `ArrangeIt_1.0.0_x64-setup.exe` — no Rust, Node or other tooling required.
+> The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
+
 ```
  ┌───────────────┬──────────────────────────────────┬────────────────┐
  │  Files        │  Arrange · Duplicates · Rename   │  Preview       │
@@ -22,7 +26,7 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
 | **Preview** | Metadata, dimensions, durations, text previews, image thumbnails and a 42-band audio waveform — plus “where this file will land” for the current rule. |
 | **Themes** | Dusk, Midnight, Amber and Paper, persisted per machine. |
 
-## Quick start
+## Quick start (from source)
 
 ```bash
 git clone https://github.com/mubareksam/Arrangeit.git
