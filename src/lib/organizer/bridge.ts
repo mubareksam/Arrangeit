@@ -50,13 +50,14 @@ export interface ScanResult {
   truncated: boolean;
 }
 
-export async function scanFolder(path: string, recursive = true): Promise<ScanResult> {
+export async function scanFolder(path: string, recursive = true, hash = false): Promise<ScanResult> {
   const started = performance.now();
   if (isTauri()) {
     // No fallback: whatever the disk returns is what the user sees.
     const result = await invokeTauri<{ files: AppFile[]; root: string; truncated: boolean }>("scan_folder", {
       path,
       recursive,
+      hash,
     });
     return { ...result, elapsedMs: Math.round(performance.now() - started) };
   }
@@ -88,6 +89,71 @@ export async function listFolders(path: string): Promise<FolderEntry[]> {
     files: folder.count,
     bytes: folder.bytes,
   }));
+}
+
+export interface FileInfo {
+  width?: number;
+  height?: number;
+  duration?: number;
+  textPreview?: string;
+  audioBitrate?: number;
+}
+
+/** Cheap on-demand detail for a single file (only what the preview needs). */
+export async function inspectFile(path: string): Promise<FileInfo> {
+  if (isTauri()) {
+    return invokeTauri<FileInfo>("inspect_file", { path });
+  }
+  const mock = MOCK_FILES.find((file) => file.path === path);
+  return {
+    width: mock?.width,
+    height: mock?.height,
+    duration: mock?.duration,
+    textPreview: mock?.textPreview,
+  };
+}
+
+export interface HashEntry {
+  path: string;
+  hash: string;
+}
+
+/** SHA-256 for a specific set of paths — run only when duplicates are requested. */
+export async function computeHashes(paths: string[]): Promise<HashEntry[]> {
+  if (paths.length === 0) return [];
+  if (isTauri()) {
+    return invokeTauri<HashEntry[]>("compute_hashes", { paths });
+  }
+  await wait(160);
+  return paths
+    .map((path) => {
+      const mock = MOCK_FILES.find((file) => file.path === path);
+      return mock?.hash ? { path, hash: mock.hash } : null;
+    })
+    .filter((entry): entry is HashEntry => entry !== null);
+}
+
+export interface Signature {
+  path: string;
+  hash: string;
+}
+
+/** Perceptual dHash for images — powers "visually similar" detection. */
+export async function imageSignatures(paths: string[]): Promise<Signature[]> {
+  if (paths.length === 0) return [];
+  if (isTauri()) {
+    return invokeTauri<Signature[]>("image_signatures", { paths });
+  }
+  await wait(200);
+  // Deterministic fake signatures for the demo so similar tiles cluster.
+  return paths.map((path) => {
+    const name = path.split("\\").pop() ?? path;
+    let h = 0xcbf29ce484222325n;
+    for (const char of name.toLowerCase().replace(/[^a-z]/g, "").slice(0, 6)) {
+      h = (h ^ BigInt(char.charCodeAt(0))) * 1099511628211n;
+    }
+    return { path, hash: (h & 0xffffffffffffffffn).toString(16).padStart(16, "0") };
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -238,9 +304,9 @@ export async function applyFolderStyle(style: FolderStyle, root: string, dryRun:
   };
 }
 
-export async function resetFolderStyle(root: string, folder: string): Promise<StyleStep[]> {
+export async function resetFolderStyle(root: string, folder: string, path?: string): Promise<StyleStep[]> {
   if (isTauri()) {
-    return invokeTauri<StyleStep[]>("reset_folder_style", { root, folder });
+    return invokeTauri<StyleStep[]>("reset_folder_style", { root, folder, path: path ?? null });
   }
   await wait(220);
   return [
@@ -280,11 +346,11 @@ export async function revertFiles(ops: UndoOp[]): Promise<RevertOutcome> {
 /* Shell helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-export async function pickFolder(): Promise<string | null> {
+export async function pickFolder(title = "Choose a folder to arrange"): Promise<string | null> {
   if (!isTauri()) return null;
   try {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const picked = await open({ directory: true, multiple: false, title: "Choose a folder to arrange" });
+    const picked = await open({ directory: true, multiple: false, title });
     return typeof picked === "string" ? picked : null;
   } catch {
     return null;

@@ -158,12 +158,14 @@ export interface ArrangeSummaryRow {
 /* Duplicates                                                          */
 /* ------------------------------------------------------------------ */
 
-export type DuplicateMatch = "exact" | "audio" | "image" | "name";
+export type DuplicateMatch = "exact" | "audio" | "image" | "visual" | "name";
 
 export interface DuplicateOptions {
   byHash: boolean;
   byAudio: boolean;
   byImage: boolean;
+  /** Perceptual (dHash) comparison of image content. */
+  byVisual: boolean;
   byName: boolean;
   /** 0–100 name similarity floor for fuzzy matching. */
   fuzzy: number;
@@ -212,25 +214,90 @@ export type FolderGlyph =
   | "folder"
   | "star"
   | "book"
-  | "music"
   | "film"
+  | "music"
   | "camera"
   | "briefcase"
-  | "flask";
+  | "flask"
+  | "heart"
+  | "bolt"
+  | "cloud"
+  | "shield"
+  | "gear"
+  | "leaf"
+  | "flame"
+  | "moon"
+  | "sun"
+  | "plane"
+  | "cart"
+  | "home"
+  | "key"
+  | "clock"
+  | "layers"
+  | "terminal"
+  | "gamepad";
 
+/** 25 drawable badge shapes — each one is rendered into the .ico by the Rust side. */
 export const FOLDER_GLYPHS: { id: FolderGlyph; label: string; glyph: string }[] = [
   { id: "folder", label: "Folder", glyph: "🗀" },
   { id: "star", label: "Star", glyph: "★" },
-  { id: "book", label: "Book", glyph: "📖" },
-  { id: "music", label: "Music", glyph: "♪" },
+  { id: "book", label: "Book", glyph: "▤" },
   { id: "film", label: "Film", glyph: "▶" },
+  { id: "music", label: "Music", glyph: "♪" },
   { id: "camera", label: "Camera", glyph: "◉" },
-  { id: "briefcase", label: "Work", glyph: "▤" },
-  { id: "flask", label: "Lab", glyph: "⚗" },
+  { id: "briefcase", label: "Briefcase", glyph: "▥" },
+  { id: "flask", label: "Flask", glyph: "⚗" },
+  { id: "heart", label: "Heart", glyph: "♥" },
+  { id: "bolt", label: "Bolt", glyph: "ϟ" },
+  { id: "cloud", label: "Cloud", glyph: "☁" },
+  { id: "shield", label: "Shield", glyph: "⛨" },
+  { id: "gear", label: "Gear", glyph: "⚙" },
+  { id: "leaf", label: "Leaf", glyph: "❧" },
+  { id: "flame", label: "Flame", glyph: "♨" },
+  { id: "moon", label: "Moon", glyph: "☾" },
+  { id: "sun", label: "Sun", glyph: "☀" },
+  { id: "plane", label: "Plane", glyph: "✈" },
+  { id: "cart", label: "Cart", glyph: "🛒" },
+  { id: "home", label: "Home", glyph: "⌂" },
+  { id: "key", label: "Key", glyph: "⚿" },
+  { id: "clock", label: "Clock", glyph: "◷" },
+  { id: "layers", label: "Layers", glyph: "▤" },
+  { id: "terminal", label: "Terminal", glyph: ">_" },
+  { id: "gamepad", label: "Gamepad", glyph: "◍" },
+];
+
+export interface StylePreset {
+  id: string;
+  label: string;
+  glyph: FolderGlyph;
+  color: string;
+  tooltip: string;
+}
+
+/** One-click looks for the folders people actually keep. */
+export const STYLE_PRESETS: StylePreset[] = [
+  { id: "archive", label: "Archive", glyph: "briefcase", color: "#94a3b8", tooltip: "Cold storage" },
+  { id: "images", label: "Images", glyph: "camera", color: "#38bdf8", tooltip: "Photos & screenshots" },
+  { id: "audio", label: "Audio", glyph: "music", color: "#a78bfa", tooltip: "Music & recordings" },
+  { id: "video", label: "Video", glyph: "film", color: "#f472b6", tooltip: "Footage & clips" },
+  { id: "docs", label: "Documents", glyph: "book", color: "#fbbf24", tooltip: "Papers & invoices" },
+  { id: "code", label: "Code", glyph: "terminal", color: "#34d399", tooltip: "Repos & scripts" },
+  { id: "projects", label: "Projects", glyph: "layers", color: "#5b9dff", tooltip: "Active work" },
+  { id: "games", label: "Games", glyph: "gamepad", color: "#c084fc", tooltip: "Saves & installs" },
+  { id: "finance", label: "Finance", glyph: "cart", color: "#4ade80", tooltip: "Taxes & receipts" },
+  { id: "travel", label: "Travel", glyph: "plane", color: "#22d3ee", tooltip: "Trips & tickets" },
+  { id: "home", label: "Home", glyph: "home", color: "#fb923c", tooltip: "Personal & household" },
+  { id: "secure", label: "Private", glyph: "key", color: "#f43f5e", tooltip: "Restricted" },
+  { id: "temp", label: "Temp", glyph: "clock", color: "#8b95a5", tooltip: "Safe to delete" },
+  { id: "backup", label: "Backup", glyph: "shield", color: "#2dd4bf", tooltip: "Recovery copies" },
+  { id: "favourites", label: "Favourites", glyph: "star", color: "#eab308", tooltip: "Best of" },
+  { id: "ideas", label: "Ideas", glyph: "bolt", color: "#f59e0b", tooltip: "Sparks & drafts" },
 ];
 
 export interface FolderStyle {
   folder: string;
+  /** Absolute folder path — lets you style any directory, not just subfolders of the scan root. */
+  path?: string;
   glyph: FolderGlyph;
   /** Hex accent used for the tile and the generated `.ico` name. */
   color: string;
@@ -275,4 +342,42 @@ export interface UndoRecord {
   entries: string[];
   /** Machine-readable moves, used by the `revert_files` command. */
   ops?: UndoOp[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Insights                                                            */
+/* ------------------------------------------------------------------ */
+
+export type InsightKind = "duplicates" | "screenshots" | "large" | "stale" | "mixed" | "similar" | "unstyled" | "installers";
+
+export interface Insight {
+  id: string;
+  kind: InsightKind;
+  title: string;
+  detail: string;
+  /** e.g. "412 MB reclaimable" */
+  impact?: string;
+  actionLabel: string;
+  /** Where the action sends the user. */
+  target: "duplicates" | "arrange" | "styles";
+  rule?: Partial<ArrangeRule>;
+  folder?: string;
+  preset?: StylePreset;
+  count?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* History                                                             */
+/* ------------------------------------------------------------------ */
+
+export interface HistoryEntry {
+  id: string;
+  at: string;
+  kind: LogKind;
+  label: string;
+  detail?: string;
+  entries: string[];
+  ops: UndoOp[];
+  /** false once the paths it refers to have been reversed or cleaned up. */
+  reversible: boolean;
 }

@@ -1,15 +1,16 @@
 import { formatDate } from "../../lib/organizer/engine";
 import type { LogEntry, LogKind, UndoRecord } from "../../lib/organizer/types";
+import { Icon, type IconName } from "../Icon";
 import { Badge, Empty } from "../ui";
 
-const KIND_GLYPH: Record<LogKind, string> = {
-  scan: "⌕",
-  arrange: "⇄",
-  duplicate: "⧉",
-  rename: "✎",
-  style: "◧",
-  undo: "↺",
-  error: "!",
+const KIND_ICON: Record<LogKind, IconName> = {
+  scan: "scan",
+  arrange: "sort",
+  duplicate: "duplicate",
+  rename: "pencil",
+  style: "folder",
+  undo: "undo",
+  error: "alert",
 };
 
 export function LogTab({
@@ -28,61 +29,83 @@ export function LogTab({
   return (
     <div className="panel">
       <div className="panel-head">
-        <span className="panel-title">Activity</span>
-        <span className="panel-sub">· {entries.length} events</span>
+        <span className="panel-title">
+          <Icon name="history" size={14} />
+          History
+        </span>
+        <span className="panel-sub">· {entries.length} events · every move is reversible</span>
         <span className="spacer" />
         <button className="btn sm ghost" onClick={onClear} disabled={entries.length === 0}>
-          Clear
+          <Icon name="trash" size={12} /> Clear
         </button>
       </div>
 
-      <div className="pad stack" style={{ paddingBottom: 8 }}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <span className="label">Last action</span>
-          <button className="btn sm" onClick={() => last && onUndo(last)} disabled={!last}>
-            ↺ Undo
-          </button>
-        </div>
-        {last ? (
-          <div className="step" style={{ borderBottom: 0 }}>
-            <span className="ok">↺</span>
-            <span>
-              <code style={{ color: "var(--text)" }}>{last.label}</code>
-              <span className="hint" style={{ display: "block" }}>
-                {last.entries.length} reversible step{last.entries.length === 1 ? "" : "s"}
-                {undoStack.length > 1 ? ` · ${undoStack.length - 1} older action${undoStack.length - 1 === 1 ? "" : "s"} queued` : ""}
-              </span>
-            </span>
-          </div>
-        ) : (
-          <span className="hint">Arrange, rename and style runs land here so you can undo them.</span>
-        )}
-      </div>
-
-      <div className="divider" />
-
       <div className="panel-body">
+        {undoStack.length > 0 ? (
+          <div className="pad stack-sm">
+            <div className="banner">
+              <span className="insight-icon">
+                <Icon name="undo" size={15} />
+              </span>
+              <div className="stack-sm" style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 12.5 }}>{last.label}</div>
+                <span className="hint">
+                  {last.entries.length} change{last.entries.length === 1 ? "" : "s"} · {formatDate(new Date().toISOString(), true)}
+                </span>
+              </div>
+              <span className="spacer" />
+              <button className="btn primary sm" onClick={() => onUndo(last)} disabled={!last.ops?.length}>
+                <Icon name="undo" size={12} /> Undo all
+              </button>
+            </div>
+
+            {undoStack
+              .slice()
+              .reverse()
+              .map((record) => (
+                <div className="logrow" key={record.id}>
+                  <span className="logkind">
+                    <Icon name={KIND_ICON[record.kind]} size={12} />
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div className="logmsg">{record.label}</div>
+                    <div className="hint mono ellipsis" title={record.entries.join("\n")}>
+                      {record.entries.slice(0, 3).join(" · ")}
+                      {record.entries.length > 3 ? ` +${record.entries.length - 3}` : ""}
+                    </div>
+                  </div>
+                  <button className="btn sm ghost" onClick={() => onUndo(record)} disabled={!record.ops?.length}>
+                    <Icon name="undo" size={11} /> Restore
+                  </button>
+                </div>
+              ))}
+          </div>
+        ) : null}
+
         {entries.length === 0 ? (
-          <Empty title="No activity yet" hint="Scans, moves, renames and folder styles are logged here." />
+          <Empty icon="history" title="No history yet" hint="Scans, moves, renames and style changes all appear here." />
         ) : (
           entries.map((entry) => (
             <div className="logrow" key={entry.id}>
-              <span className="logkind" aria-hidden="true">
-                {KIND_GLYPH[entry.kind]}
+              <span className="logkind">
+                <Icon name={KIND_ICON[entry.kind]} size={12} />
               </span>
-              <span style={{ minWidth: 0 }}>
-                <span className="logmsg">{entry.message}</span>
-                {entry.detail ? <span className="hint" style={{ display: "block" }}>{entry.detail}</span> : null}
-              </span>
-              <span className="hint tnum">{formatDate(entry.at, true).split(" ").slice(-1)}</span>
+              <div style={{ minWidth: 0 }}>
+                <div className="logmsg">{entry.message}</div>
+                {entry.detail ? <div className="hint">{entry.detail}</div> : null}
+              </div>
+              <span className="hint tnum">{formatDate(entry.at)}</span>
             </div>
           ))
         )}
       </div>
 
       <div className="footbar">
-        <Badge tone={undoStack.length ? "accent" : "neutral"}>{undoStack.length} undoable</Badge>
-        <span className="hint">Ctrl+Z works anywhere in the app</span>
+        <Badge tone="ok">
+          <Icon name="lock" size={10} /> deletion goes to the Recycle Bin
+        </Badge>
+        <span className="spacer" />
+        <span className="hint">Nothing leaves your PC — every byte stays local.</span>
       </div>
     </div>
   );

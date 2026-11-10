@@ -62,6 +62,9 @@ pub struct StyleStep {
 #[serde(rename_all = "camelCase")]
 pub struct FolderStyle {
     pub folder: String,
+    /// Absolute folder path; when set it wins over `root + folder`.
+    #[serde(default)]
+    pub path: Option<String>,
     pub glyph: String,
     pub color: String,
     #[serde(default)]

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { assetUrl, isTauri } from "../lib/organizer/bridge";
+import { assetUrl, inspectFile, isTauri, type FileInfo } from "../lib/organizer/bridge";
 import { formatDate, humanBytes, humanDuration, waveform } from "../lib/organizer/engine";
 import { KIND_CONFIG, type AppFile } from "../lib/organizer/types";
+import { Icon, KIND_ICON } from "./Icon";
 import { Badge, Empty, KindDot } from "./ui";
 
 const BARS = 56;
 
-/** Decodes the real file to real peak values; falls back to a deterministic shape. */
 function useWaveform(file: AppFile | null) {
   const [peaks, setPeaks] = useState<number[] | null>(null);
   const [error, setError] = useState(false);
@@ -29,15 +29,14 @@ function useWaveform(file: AppFile | null) {
         const values: number[] = [];
         for (let i = 0; i < BARS; i += 1) {
           let peak = 0;
-          const start = i * block;
-          const end = Math.min(start + block, channel.length);
-          // stride for long files so this stays fast
-          const stride = Math.max(1, Math.floor((end - start) / 512));
-          for (let j = start; j < end; j += stride) peak = Math.max(peak, Math.abs(channel[j]));
-          values.push(Math.max(0.06, Math.min(1, peak)));
+          const from = i * block;
+          const to = Math.min(from + block, channel.length);
+          const stride = Math.max(1, Math.floor((to - from) / 400));
+          for (let j = from; j < to; j += stride) peak = Math.max(peak, Math.abs(channel[j]));
+          values.push(Math.max(0.05, Math.min(1, peak)));
         }
         const max = Math.max(...values, 0.001);
-        if (!cancelled) setPeaks(values.map((v) => Math.max(0.06, v / max)));
+        if (!cancelled) setPeaks(values.map((value) => Math.max(0.05, value / max)));
         void ctx.close();
       } catch {
         if (!cancelled) setError(true);
@@ -64,7 +63,28 @@ export function PreviewPane({
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [mediaError, setMediaError] = useState(false);
+  const [info, setInfo] = useState<FileInfo | null>(null);
   const { peaks, error: waveformError } = useWaveform(file);
+
+  // Only ask the disk for the expensive details of the file being shown.
+  useEffect(() => {
+    setInfo(null);
+    if (!file || !isTauri()) return;
+    const needs =
+      (file.kind === "image" && !file.width) ||
+      ((file.kind === "audio" || file.kind === "video") && !file.duration) ||
+      ((file.kind === "document" || file.kind === "code") && !file.textPreview);
+    if (!needs) return;
+    let cancelled = false;
+    inspectFile(file.path)
+      .then((result) => {
+        if (!cancelled) setInfo(result);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
 
   useEffect(() => {
     setPlaying(false);
@@ -78,7 +98,7 @@ export function PreviewPane({
   }, [peaks, file?.name]);
 
   const url = file ? assetUrl(file.path) : "";
-  const canPlayMedia = Boolean(url) && !mediaError;
+  const canPlay = Boolean(url) && !mediaError;
 
   const togglePlay = useCallback(async () => {
     const audio = audioRef.current;
@@ -96,83 +116,77 @@ export function PreviewPane({
     }
   }, []);
 
-  const seek = useCallback(
-    (fraction: number) => {
-      setProgress(fraction);
-      const audio = audioRef.current;
-      if (audio && Number.isFinite(audio.duration)) audio.currentTime = audio.duration * fraction;
-    },
-    [],
-  );
+  const seek = useCallback((fraction: number) => {
+    setProgress(fraction);
+    const audio = audioRef.current;
+    if (audio && Number.isFinite(audio.duration)) audio.currentTime = audio.duration * fraction;
+  }, []);
 
   if (!file) {
     return (
       <div className="panel preview">
         <div className="preview-head">
+          <Icon name="image" size={14} />
           <span className="panel-title">Preview</span>
         </div>
-        <Empty title="Nothing selected" hint="Select a file to see its preview, metadata and planned destination." />
+        <Empty icon="image" title="Nothing selected" hint="Pick a file to see its preview, metadata and planned destination." />
       </div>
     );
   }
 
   const meta = KIND_CONFIG[file.kind];
-  const elapsed = (file.duration ?? 0) * progress;
+  const width = file.width ?? info?.width;
+  const height = file.height ?? info?.height;
+  const duration = file.duration ?? info?.duration;
+  const text = file.textPreview ?? info?.textPreview;
+  const elapsed = (duration ?? 0) * progress;
 
   return (
     <div className="panel preview">
       <div className="preview-head">
-        <KindDot kind={file.kind} />
-        <span className="panel-title">{meta.label}</span>
+        <Icon name="image" size={14} />
+        <span className="panel-title">Preview</span>
+        <span className="panel-sub">· {meta.label}</span>
         <span className="spacer" />
+        <KindDot kind={file.kind} />
         {file.ext ? <Badge>{file.ext.toUpperCase()}</Badge> : null}
       </div>
 
       <div className="panel-body">
         <div className="pad stack fade" key={file.id}>
-          {/* ---------- media ---------- */}
           {file.kind === "image" ? (
-            canPlayMedia ? (
+            canPlay ? (
               <div className="media">
-                <img
-                  src={url}
-                  alt={file.name}
-                  loading="lazy"
-                  onError={() => setMediaError(true)}
-                  style={{ maxHeight: 240 }}
-                />
+                <img src={url} alt={file.name} loading="lazy" onError={() => setMediaError(true)} style={{ maxHeight: 240 }} />
               </div>
             ) : (
               <div className="media">
                 <div className="fallback">
-                  <span className="big">▣</span>
+                  <Icon name="image" size={22} />
                   {isTauri() ? "Image could not be decoded" : "Image preview needs the desktop app"}
-                  <span className="mono" style={{ fontSize: 10 }}>
-                    {file.width}×{file.height}
-                  </span>
+                  {width ? (
+                    <span className="mono" style={{ fontSize: 10 }}>
+                      {width}×{height}
+                    </span>
+                  ) : null}
                 </div>
               </div>
             )
           ) : null}
 
           {file.kind === "video" ? (
-            canPlayMedia ? (
+            canPlay ? (
               <div className="media">
-                <video
-                  src={url}
-                  controls
-                  preload="metadata"
-                  onError={() => setMediaError(true)}
-                  style={{ maxHeight: 220 }}
-                />
+                <video src={url} controls preload="metadata" onError={() => setMediaError(true)} style={{ maxHeight: 220 }} />
               </div>
             ) : (
               <div className="media">
                 <div className="fallback">
-                  <span className="big">▶</span>
+                  <Icon name="video" size={22} />
                   {isTauri() ? "Video could not be opened" : "Video preview needs the desktop app"}
                   <span className="mono" style={{ fontSize: 10 }}>
-                    {file.width}×{file.height} · {humanDuration(file.duration)}
+                    {width && height ? `${width}×${height} · ` : ""}
+                    {humanDuration(duration)}
                   </span>
                 </div>
               </div>
@@ -194,21 +208,24 @@ export function PreviewPane({
                   seek(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)));
                 }}
               >
-                {bars.map((value, i) => (
-                  <i key={i} className={i / bars.length <= progress ? "on" : undefined} style={{ height: `${Math.round(value * 100)}%` }} />
+                {bars.map((value, index) => (
+                  <i
+                    key={index}
+                    className={index / bars.length <= progress ? "on" : undefined}
+                    style={{ height: `${Math.round(value * 100)}%` }}
+                  />
                 ))}
               </div>
               <div className="player">
-                <button className="btn sm" onClick={() => void togglePlay()} disabled={!canPlayMedia}>
-                  {playing ? "❚❚" : "▶"} {playing ? "Pause" : "Play"}
+                <button className="btn sm" onClick={() => void togglePlay()} disabled={!canPlay}>
+                  <Icon name={playing ? "pause" : "play"} size={11} />
+                  {playing ? "Pause" : "Play"}
                 </button>
                 <span className="tnum">
-                  {humanDuration(elapsed)} / {humanDuration(file.duration)}
+                  {humanDuration(elapsed)} / {humanDuration(duration)}
                 </span>
                 <span className="spacer" />
-                <span className="hint">
-                  {peaks ? "Real peaks" : waveformError ? "Waveform unavailable" : isTauri() ? "Waveform" : "Demo waveform"}
-                </span>
+                <span className="hint">{peaks ? "decoded" : waveformError ? "waveform n/a" : "waveform"}</span>
               </div>
               {url ? (
                 <audio
@@ -230,17 +247,14 @@ export function PreviewPane({
           ) : null}
 
           {file.kind !== "image" && file.kind !== "video" && file.kind !== "audio" ? (
-            <div className="media" style={{ minHeight: 96 }}>
-              <div className="fallback">
-                <span className="big" style={{ color: meta.color }}>
-                  {meta.glyph}
-                </span>
-                {file.textPreview ? "Text preview below" : "No inline preview for this type"}
+            <div className="media" style={{ minHeight: 84 }}>
+              <div className="fallback" style={{ color: meta.color }}>
+                <Icon name={KIND_ICON[file.kind] ?? "file"} size={24} />
+                <span style={{ color: "var(--text-3)" }}>{text ? "Text preview below" : "No inline preview"}</span>
               </div>
             </div>
           ) : null}
 
-          {/* ---------- identity ---------- */}
           <div>
             <div style={{ fontWeight: 600, fontSize: 12.5, wordBreak: "break-word" }}>{file.name}</div>
             <div className="hint mono" style={{ wordBreak: "break-all", marginTop: 2 }}>
@@ -248,7 +262,7 @@ export function PreviewPane({
             </div>
           </div>
 
-          {file.textPreview ? <pre className="textprev">{file.textPreview}</pre> : null}
+          {text ? <pre className="textprev">{text}</pre> : null}
 
           <div className="meta-list">
             <div className="meta-row">
@@ -263,18 +277,24 @@ export function PreviewPane({
               <span className="k">Folder</span>
               <span className="v">{file.folder}</span>
             </div>
-            {file.width ? (
+            {width && height ? (
               <div className="meta-row">
                 <span className="k">Dimensions</span>
                 <span className="v">
-                  {file.width}×{file.height}
+                  {width}×{height}
                 </span>
               </div>
             ) : null}
-            {file.duration ? (
+            {duration ? (
               <div className="meta-row">
                 <span className="k">Duration</span>
-                <span className="v">{humanDuration(file.duration)}</span>
+                <span className="v">{humanDuration(duration)}</span>
+              </div>
+            ) : null}
+            {info?.audioBitrate ? (
+              <div className="meta-row">
+                <span className="k">Bitrate</span>
+                <span className="v">{info.audioBitrate} kbps</span>
               </div>
             ) : null}
             {file.hash ? (
@@ -296,14 +316,10 @@ export function PreviewPane({
 
           <div className="row">
             <button className="btn sm block" onClick={() => onReveal(file.path)} disabled={!isTauri()}>
-              Show in Explorer
+              <Icon name="external" size={12} /> Show in Explorer
             </button>
-            <button
-              className="btn sm"
-              onClick={() => void navigator.clipboard?.writeText(file.path)}
-              title="Copy path"
-            >
-              ⇢
+            <button className="btn sm" onClick={() => void navigator.clipboard?.writeText(file.path)} title="Copy path">
+              <Icon name="duplicate" size={12} />
             </button>
           </div>
         </div>

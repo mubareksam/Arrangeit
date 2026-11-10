@@ -6,15 +6,16 @@ import {
   type ArrangeRule,
   type ArrangeSummaryRow,
 } from "../../lib/organizer/types";
+import { Icon, type IconName } from "../Icon";
 import { Badge, KindDot, Segmented, Toggle } from "../ui";
 
-const MODES: { id: ArrangeMode; label: string; glyph: string; hint: string }[] = [
-  { id: "date", label: "Date", glyph: "🗓", hint: "Year, month or day buckets" },
-  { id: "type", label: "Type", glyph: "▤", hint: "Images, Audio, Documents…" },
-  { id: "size", label: "Size", glyph: "⇕", hint: "Tiny → Huge ranges" },
-  { id: "similarity", label: "Similar", glyph: "≋", hint: "Cluster look-alike names" },
-  { id: "name", label: "Name", glyph: "A", hint: "Alphabetical folders" },
-  { id: "ext", label: "Extension", glyph: ".", hint: "One folder per extension" },
+const MODES: { id: ArrangeMode; label: string; icon: IconName; hint: string }[] = [
+  { id: "date", label: "Date", icon: "clock", hint: "Year, month or day buckets" },
+  { id: "type", label: "Type", icon: "grid", hint: "Images, Audio, Documents…" },
+  { id: "size", label: "Size", icon: "sliders", hint: "Tiny → Huge ranges" },
+  { id: "similarity", label: "Similar", icon: "sparkles", hint: "Cluster look-alike names" },
+  { id: "name", label: "Name", icon: "sort", hint: "Alphabetical folders" },
+  { id: "ext", label: "Extension", icon: "file", hint: "One folder per extension" },
 ];
 
 export interface ArrangePreset {
@@ -35,6 +36,7 @@ export function ArrangeTab({
   busy,
   presets,
   onPreset,
+  compact,
 }: {
   rule: ArrangeRule;
   setRule: (next: ArrangeRule) => void;
@@ -47,24 +49,28 @@ export function ArrangeTab({
   busy: boolean;
   presets: ArrangePreset[];
   onPreset: (preset: ArrangePreset) => void;
+  compact?: boolean;
 }) {
   const patch = (next: Partial<ArrangeRule>) => setRule({ ...rule, ...next });
   const collisions = items.filter((i) => i.status === "collision").length;
   const totalBytes = items.reduce((sum, i) => sum + i.file.size, 0);
-  const activeMode = MODES.find((m) => m.id === rule.mode)!;
+  const activeMode = MODES.find((mode) => mode.id === rule.mode)!;
 
   const toggleRange = (id: string) => {
-    const has = rule.sizeRanges.some((r) => r.id === id);
+    const has = rule.sizeRanges.some((range) => range.id === id);
     const next = has
-      ? rule.sizeRanges.filter((r) => r.id !== id)
-      : [...rule.sizeRanges, DEFAULT_SIZE_RANGES.find((r) => r.id === id)!];
+      ? rule.sizeRanges.filter((range) => range.id !== id)
+      : [...rule.sizeRanges, DEFAULT_SIZE_RANGES.find((range) => range.id === id)!];
     patch({ sizeRanges: next.length ? next : DEFAULT_SIZE_RANGES });
   };
 
   return (
     <div className="panel">
       <div className="panel-head">
-        <span className="panel-title">Arrange</span>
+        <span className="panel-title">
+          <Icon name="sort" size={14} />
+          Arrange
+        </span>
         <span className="panel-sub">· {activeMode.hint}</span>
         <span className="spacer" />
         <Segmented
@@ -80,25 +86,23 @@ export function ArrangeTab({
 
       <div className="panel-body">
         <div className="pad stack">
-          <div className="row wrap" style={{ justifyContent: "space-between" }}>
-            <div className="modes" role="group" aria-label="Arrange by">
-              {MODES.map((mode) => (
-                <button
-                  key={mode.id}
-                  className="mode"
-                  aria-pressed={rule.mode === mode.id}
-                  onClick={() => patch({ mode: mode.id })}
-                  title={mode.hint}
-                >
-                  <span className="glyph">{mode.glyph}</span>
-                  {mode.label}
-                </button>
-              ))}
-            </div>
+          <div className="modes" role="group" aria-label="Arrange by">
+            {MODES.map((mode) => (
+              <button
+                key={mode.id}
+                className="mode"
+                aria-pressed={rule.mode === mode.id}
+                onClick={() => patch({ mode: mode.id })}
+                title={mode.hint}
+              >
+                <Icon name={mode.icon} size={15} />
+                {mode.label}
+              </button>
+            ))}
           </div>
 
-          <div className="row wrap" style={{ gap: 6 }}>
-            <span className="label" style={{ marginRight: 2 }}>
+          <div className="row wrap" style={{ gap: 5 }}>
+            <span className="label" style={{ marginRight: 3 }}>
               Presets
             </span>
             {presets.map((preset) => (
@@ -130,11 +134,10 @@ export function ArrangeTab({
             <>
               <span className="label">Ranges</span>
               {DEFAULT_SIZE_RANGES.map((range) => {
-                const on = rule.sizeRanges.some((r) => r.id === range.id);
+                const on = rule.sizeRanges.some((item) => item.id === range.id);
                 return (
                   <button key={range.id} className="chip" data-active={on} onClick={() => toggleRange(range.id)}>
                     {range.label.split("(")[0].trim()}
-                    <span className="hint">{range.label.slice(range.label.indexOf("("))}</span>
                   </button>
                 );
               })}
@@ -151,7 +154,7 @@ export function ArrangeTab({
                 value={rule.similarityThreshold}
                 onChange={(e) => patch({ similarityThreshold: Number(e.target.value) })}
                 aria-label="Similarity threshold"
-                style={{ width: 130, accentColor: "var(--accent)" }}
+                style={{ width: 128, accentColor: "var(--accent)" }}
               />
               <Badge>{rule.similarityThreshold}%</Badge>
             </>
@@ -183,8 +186,8 @@ export function ArrangeTab({
           <tbody>
             {summary.length === 0 ? (
               <tr>
-                <td colSpan={3} style={{ color: "var(--faint)", padding: "18px 12px", textAlign: "center" }}>
-                  {items.length === 0 ? "Nothing selected for this plan." : "Pick a rule to build a plan."}
+                <td colSpan={3} style={{ color: "var(--text-3)", padding: "18px 12px", textAlign: "center" }}>
+                  {items.length === 0 ? "Select files to build a plan." : "Pick a rule to build a plan."}
                 </td>
               </tr>
             ) : (
@@ -192,8 +195,8 @@ export function ArrangeTab({
                 <tr key={row.folder}>
                   <td>
                     <span className="target">
-                      <span className="folder-ico" aria-hidden="true">
-                        ▸
+                      <span className="folder-ico">
+                        <Icon name="folder" size={13} />
                       </span>
                       <span className="ellipsis" title={row.folder}>
                         {row.folder}
@@ -212,14 +215,14 @@ export function ArrangeTab({
           </tbody>
         </table>
 
-        {items.length > 0 ? (
+        {items.length > 0 && !compact ? (
           <>
             <div className="divider" />
             <div className="plan-sample">
               <div className="row" style={{ justifyContent: "space-between", marginBottom: 4 }}>
                 <span className="label">Sample moves</span>
                 <button className="btn sm ghost" onClick={onExport}>
-                  Export CSV
+                  <Icon name="download" size={12} /> CSV
                 </button>
               </div>
               {items.slice(0, 6).map((item) => (
@@ -228,7 +231,7 @@ export function ArrangeTab({
                   <span className="mono ellipsis" style={{ flex: "1 1 auto", minWidth: 0 }}>
                     {item.file.name}
                   </span>
-                  <span className="arrow">→</span>
+                  <Icon name="arrowRight" size={11} style={{ color: "var(--text-3)" }} />
                   <span className="mono ellipsis" style={{ maxWidth: "44%", color: "var(--accent)" }}>
                     {item.targetFolder}
                   </span>

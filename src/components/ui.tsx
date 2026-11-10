@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Icon, KIND_ICON, type IconName } from "./Icon";
 import { KIND_CONFIG, type FileKind } from "../lib/organizer/types";
 
 export function Badge({
@@ -57,10 +58,19 @@ export function KindDot({ kind }: { kind: FileKind }) {
   return <span className="kinddot" style={{ background: KIND_CONFIG[kind].color }} aria-hidden="true" />;
 }
 
-export function FileGlyph({ kind, children }: { kind: FileKind; children?: ReactNode }) {
+export function FileGlyph({ kind }: { kind: FileKind }) {
+  const meta = KIND_CONFIG[kind];
   return (
-    <span className="fileglyph" style={{ color: KIND_CONFIG[kind].color }} aria-hidden="true">
-      {children ?? KIND_CONFIG[kind].glyph}
+    <span className="fileglyph" style={{ color: meta.color }} aria-hidden="true">
+      <Icon name={KIND_ICON[kind] ?? "file"} size={14} />
+    </span>
+  );
+}
+
+export function Art({ name, tone }: { name: IconName; tone?: string }) {
+  return (
+    <span className="art" style={tone ? { color: tone } : undefined}>
+      <Icon name={name} size={20} strokeWidth={1.6} />
     </span>
   );
 }
@@ -68,16 +78,23 @@ export function FileGlyph({ kind, children }: { kind: FileKind; children?: React
 export function Empty({
   title,
   hint,
+  icon = "folder",
   action,
 }: {
   title: string;
   hint?: string;
+  icon?: IconName;
   action?: ReactNode;
 }) {
   return (
     <div className="empty">
+      <Art name={icon} />
       <div className="empty-title">{title}</div>
-      {hint ? <div className="hint" style={{ maxWidth: 300 }}>{hint}</div> : null}
+      {hint ? (
+        <div className="hint" style={{ maxWidth: 290 }}>
+          {hint}
+        </div>
+      ) : null}
       {action}
     </div>
   );
@@ -96,11 +113,15 @@ export function SectionTitle({ children, right }: { children: ReactNode; right?:
   );
 }
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Kbd({ children }: { children: ReactNode }) {
+  return <span className="kbd">{children}</span>;
+}
+
+export function Stat({ value, label }: { value: ReactNode; label: string }) {
   return (
-    <label className="field">
-      <span className="label">{label}</span>
-      {children}
-    </label>
+    <div className="statitem">
+      <div className="v">{value}</div>
+      <div className="k">{label}</div>
+    </div>
   );
 }

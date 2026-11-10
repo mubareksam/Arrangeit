@@ -8,8 +8,9 @@ mod commands;
 mod model;
 
 use commands::{
-    apply_folder_style, delete_duplicates, execute_arrange, list_folders, refresh_shell, rename_files,
-    reset_folder_style, reveal_in_explorer, revert_files, scan_folder, write_text_file,
+    apply_folder_style, compute_hashes, delete_duplicates, execute_arrange, image_signatures, inspect_file,
+    list_folders, refresh_shell, rename_files, reset_folder_style, reveal_in_explorer, revert_files, scan_folder,
+    write_text_file,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -28,6 +29,9 @@ pub fn run() {
             reset_folder_style,
             refresh_shell,
             write_text_file,
+            inspect_file,
+            compute_hashes,
+            image_signatures,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ArrangeIt");
