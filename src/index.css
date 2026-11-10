@@ -13,7 +13,7 @@
   --mono: "Cascadia Mono", "Cascadia Code", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* Frost primitives */
-  --blur: 26px;
+  --blur: 22px;
   --blur-lg: 40px;
   --glass-border: rgb(255 255 255 / 0.1);
   --glass-hi: rgb(255 255 255 / 0.075);
@@ -678,6 +678,24 @@ button {
 .statusbar .mode[data-live="true"]::before {
   background: var(--ok);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent), 0 0 12px var(--ok);
+}
+
+.taskchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px 2px 9px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  max-width: 340px;
+}
+
+.taskchip .btn {
+  padding: 1px 7px;
+  font-size: 10.5px;
 }
 
 .statusbar .sep {
@@ -1468,6 +1486,93 @@ button {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 14%, transparent);
   font-weight: 650;
+}
+
+.hashbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.dup-toggle {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  flex: 0 0 auto;
+}
+
+.dup-toggle:hover {
+  background: var(--surface-3);
+}
+
+.dup-compare {
+  display: flex;
+  gap: 7px;
+  padding: 9px 11px;
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent);
+  overflow-x: auto;
+}
+
+.dup-card-mini {
+  flex: 0 0 auto;
+  width: 104px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dup-card-mini .dup-thumb {
+  width: 104px;
+  height: 76px;
+  border-radius: 9px;
+}
+
+.dup-card-mini figcaption {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-2);
+}
+
+.dup-card-mini[data-keeper="true"] .dup-thumb {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px var(--ok), 0 0 18px -6px var(--ok);
+}
+
+.dup-card-mini.more {
+  align-items: center;
+  justify-content: center;
+  height: 76px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.dup-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-top: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface-2) 25%, transparent);
+}
+
+.dup-details {
+  padding: 4px 12px 10px;
+  border-top: 1px solid var(--border-soft);
 }
 
 /* ================================================================== */
@@ -2317,4 +2422,38 @@ button {
   .topbar {
     background: color-mix(in srgb, var(--bg) 82%, var(--surface-3));
   }
+}
+
+/* ================================================================== */
+/* Fast mode — same layout, none of the GPU cost                      */
+/* ================================================================== */
+
+[data-perf="low"] .aurora {
+  display: none;
+}
+
+[data-perf="low"] .noise {
+  opacity: 0.02;
+}
+
+[data-perf="low"] .topbar,
+[data-perf="low"] .panel,
+[data-perf="low"] .tabs,
+[data-perf="low"] .palette,
+[data-perf="low"] .toast,
+[data-perf="low"] .banner,
+[data-perf="low"] .media,
+[data-perf="low"] .codebox,
+[data-perf="low"] .textprev {
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  background-color: color-mix(in srgb, var(--bg) 88%, var(--surface-3));
+  background-image: none;
+}
+
+[data-perf="low"] .insight::after,
+[data-perf="low"] .insight:hover,
+[data-perf="low"] .foldertile:hover,
+[data-perf="low"] .mode:hover {
+  transform: none;
 }

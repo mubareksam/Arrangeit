@@ -50,28 +50,42 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.0
-          name: ArrangeIt 1.3.0 (Windows x64)
+          tag_name: v1.4.0
+          name: ArrangeIt 1.4.0 (Windows x64)
           body: |
-            **ArrangeIt 1.3.0** — local-first file organizer for Windows x64.
+            **ArrangeIt 1.4.0** — local-first file organizer for Windows x64.
 
-            Run `ArrangeIt_1.3.0_x64-setup.exe`. It **upgrades 1.2.0 in place**
+            Run `ArrangeIt_1.4.0_x64-setup.exe`. It **upgrades 1.3.0 in place**
             (same app id and install folder — you never end up with two copies).
 
-            ### New in 1.3.0 — the "Frost" interface
-            - **Glassmorphism throughout** — frosted, translucent panels with real backdrop
-              blur, hairline top-light and layered shadows, over a slow-drifting aurora mesh
-              with a film-grain overlay (kills gradient banding).
-            - **Floating glass dock** for the six workspaces, with a glowing gradient pill on
-              the active tab; the whole top bar is now a detached frosted bar.
-            - **Glassy command palette (Ctrl+K)** — deeper blur, bloom around the panel, and
-              a warm accent spotlight on the hovered row.
-            - **Depth on interaction** — cards lift, rows sweep an accent gradient, primary
-              buttons carry an inner highlight and a coloured glow.
-            - **Four themes re-tuned for glass**: Dusk, Midnight, Amber and Paper (the light
-              theme uses a frosted-white recipe so it stays crisp, not milky).
-            - **Accessibility**: `prefers-reduced-motion` disables the aurora drift and all
-              transitions; `prefers-contrast: more` thickens borders and drops translucency.
+            ### Fixed: the stuck "working" spinner
+            The bottom bar used one shared boolean for eight different jobs, so an
+            overlapping scan could leave it spinning forever. It is now a real task list:
+            each job registers itself, shows its own label and elapsed time, long jobs can be
+            cancelled, stale scan results are ignored, and nothing can leave the bar stuck.
+            Scans now default to *this folder only* (turn on Subfolders when you want depth).
+
+            ### New app icon
+            A frosted gradient tile with a folder cut out of it and an arrow punched through in
+            the tile's own gradient — drawn as vector, rendered to a hand-built multi-size
+            `.ico` (DIB at 16/24/32/48/64/128, PNG at 256). It appears in the taskbar, the
+            installer, the Start menu and inside the app.
+
+            ### Advanced duplicate finder
+            - Stat strip: groups, extra copies, reclaimable bytes, biggest group.
+            - Filters: minimum reclaimable size, **across folders only**, media only.
+            - Keeper strategies: best quality / newest / oldest / largest / shortest path.
+            - Compare strip with thumbnails and the keeper ringed in green; per-file sizes,
+              dimensions and dates; confidence per group.
+            - Ignore a group (reversible), keep one copy per folder, export the whole report
+              as CSV, then recycle the extras to the Recycle Bin with full undo.
+
+            ### Faster
+            - Duplicate pixel pass runs in batches of 24 with live progress, so the window stays
+              responsive and cancellable.
+            - Images over 48 MB or 80 MP are skipped before decoding; folder counting is capped.
+            - **Fast mode** (appearance menu, or automatic on 4-core machines) drops the aurora
+              animation and blur radius for low-power GPUs.
 
             Everything stays on your PC; deleted files go to the Recycle Bin.
           files: src-tauri/target/release/bundle/nsis/*.exe

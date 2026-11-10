@@ -407,6 +407,107 @@ export function keeperSuggestion(group: DuplicateGroup): AppFile {
   })[0];
 }
 
+/* ------------------------------------------------------------------ */
+/* Duplicate review                                                    */
+/* ------------------------------------------------------------------ */
+
+export type KeeperStrategy = "best" | "newest" | "oldest" | "largest" | "shortest";
+
+export const KEEPER_STRATEGIES: { id: KeeperStrategy; label: string; hint: string }[] = [
+  { id: "best", label: "Best quality", hint: "Highest resolution, then largest, then oldest" },
+  { id: "newest", label: "Newest", hint: "Keep the most recently modified copy" },
+  { id: "oldest", label: "Oldest", hint: "Keep the original" },
+  { id: "largest", label: "Largest", hint: "Keep the copy with the most bytes" },
+  { id: "shortest", label: "Shortest path", hint: "Keep the copy closest to the top of the tree" },
+];
+
+/** Picks the copy to keep according to a review strategy. */
+export function pickKeeper(group: DuplicateGroup, strategy: KeeperStrategy = "best"): AppFile {
+  const files = group.files;
+  if (strategy === "best") return keeperSuggestion(group);
+  const sorted = [...files].sort((a, b) => {
+    if (strategy === "newest") return new Date(b.modified).getTime() - new Date(a.modified).getTime();
+    if (strategy === "oldest") return new Date(a.modified).getTime() - new Date(b.modified).getTime();
+    if (strategy === "largest") return b.size - a.size;
+    return a.path.split(/[\\/]+/).length - b.path.split(/[\\/]+/).length || a.path.length - b.path.length;
+  });
+  return sorted[0] ?? files[0];
+}
+
+export interface DuplicateFilter {
+  minBytes: number;
+  crossFolderOnly: boolean;
+  /** Only show groups whose members are all media. */
+  mediaOnly: boolean;
+}
+
+export const DEFAULT_DUPLICATE_FILTER: DuplicateFilter = {
+  minBytes: 0,
+  crossFolderOnly: false,
+  mediaOnly: false,
+};
+
+export function filterDuplicateGroups(groups: DuplicateGroup[], filter: DuplicateFilter): DuplicateGroup[] {
+  return groups.filter((group) => {
+    if (group.reclaimable < filter.minBytes) return false;
+    if (filter.crossFolderOnly) {
+      const folders = new Set(group.files.map((file) => file.folder.toLowerCase()));
+      if (folders.size < 2) return false;
+    }
+    if (filter.mediaOnly) {
+      const media = group.files.every((file) => file.kind === "image" || file.kind === "video" || file.kind === "audio");
+      if (!media) return false;
+    }
+    return true;
+  });
+}
+
+export interface DuplicateStats {
+  groups: number;
+  files: number;
+  extras: number;
+  reclaimable: number;
+  biggest: number;
+  byMatch: { match: DuplicateGroup["match"]; groups: number; bytes: number }[];
+}
+
+export function duplicateStats(groups: DuplicateGroup[]): DuplicateStats {
+  const byMatch = new Map<DuplicateGroup["match"], { groups: number; bytes: number }>();
+  let files = 0;
+  let reclaimable = 0;
+  let biggest = 0;
+  for (const group of groups) {
+    files += group.files.length;
+    reclaimable += group.reclaimable;
+    biggest = Math.max(biggest, group.size);
+    const entry = byMatch.get(group.match) ?? { groups: 0, bytes: 0 };
+    entry.groups += 1;
+    entry.bytes += group.reclaimable;
+    byMatch.set(group.match, entry);
+  }
+  return {
+    groups: groups.length,
+    files,
+    extras: groups.reduce((sum, group) => sum + Math.max(0, group.files.length - 1), 0),
+    reclaimable,
+    biggest,
+    byMatch: [...byMatch.entries()].map(([match, value]) => ({ match, ...value })),
+  };
+}
+
+/** How similar two images are, 0–100, from their 64-bit dHash. */
+export function similarityPercent(a: string, b: string): number {
+  const distance = hamming(a, b);
+  return Math.round(Math.max(0, 100 - (distance / 32) * 100));
+}
+
+/** Badge tone for a duplicate match kind. */
+export function matcherTone(match: DuplicateGroup["match"]): "neutral" | "ok" | "warn" | "danger" | "accent" {
+  if (match === "exact") return "ok";
+  if (match === "name") return "neutral";
+  return "accent";
+}
+
 export const MATCH_LABEL: Record<DuplicateGroup["match"], string> = {
   exact: "Byte-identical",
   audio: "Same audio",

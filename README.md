@@ -4,8 +4,10 @@
 
 Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript** for the UI. Nothing leaves your machine.
 
-> ### ⬇ [Download ArrangeIt 1.3.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.3.0/ArrangeIt_1.3.0_x64-setup.exe)
-> Run `ArrangeIt_1.3.0_x64-setup.exe` — no Rust, Node or other tooling required.
+<img src="./docs/icon.png" width="88" align="right" alt="" />
+
+> ### ⬇ [Download ArrangeIt 1.4.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.4.0/ArrangeIt_1.4.0_x64-setup.exe)
+> Run `ArrangeIt_1.4.0_x64-setup.exe` — no Rust, Node or other tooling required.
 > Already on an older version? Just run it: the installer upgrades in place (same app id +
 > install folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
@@ -17,6 +19,26 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
  └───────────────┴────────────────────────────────────────────┴────────────────┘
     Ctrl+K opens the command palette from anywhere.
 ```
+
+## What's new in 1.4.0
+
+- **The stuck "working" spinner is gone.** `busy` was a single shared boolean written by eight
+  async jobs, so an overlapping scan could leave it true forever. It is now a **task registry**:
+  every job registers `{label, startedAt, cancellable}`, the status bar lists what is actually
+  running with elapsed seconds, long jobs can be cancelled, and a **run token** means a stale
+  scan can never apply its results over a newer one. Scans default to *this folder only*.
+- **New app icon** — frosted gradient tile, folder silhouette, arrow punched through in the
+  tile's own gradient. Vector master (`scripts/make-icon.mjs`) → exact multi-size `.ico`
+  (DIB 16/24/32/48/64/128 + PNG 256, because Windows ignores PNG entries below 256), plus every
+  Windows Store logo size. `npm run icons` regenerates them.
+- **Advanced duplicate finder** — stat strip (groups · extra copies · reclaimable · biggest),
+  size / cross-folder / media filters, keeper strategies (best quality, newest, oldest, largest,
+  shortest path), thumbnail compare strip with the keeper ringed green, per-group confidence,
+  ignore list, *keep one per folder*, and CSV export of the full report.
+- **Batched, cancellable hashing** — the pixel pass runs 24 images at a time with live progress;
+  images over 48 MB or 80 MP are skipped before decoding.
+- **Fast mode** — drops the aurora animation and blur radius for low-power GPUs; auto-enabled on
+  4-core machines, toggleable in the appearance menu and remembered.
 
 ## What's new in 1.3.0 — the "Frost" interface
 
@@ -55,7 +77,7 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
 | Feature | What it does |
 | --- | --- |
 | **Auto-arrange** | Buckets files by **date** (year/month/day), **type**, **size** range, **name** (A–F…), **extension**, or **similarity** (fuzzy name clustering). Move or copy, with dry-run by default and an undo record per run. |
-| **Duplicate finder** | SHA-256 byte-identical groups, plus near-duplicates: audio matched on duration, images on pixel dimensions, **perceptual dHash for visually similar pictures**, and fuzzy name matching everywhere. Suggests the copy to keep (highest resolution → largest → oldest) and recycles the rest. |
+| **Duplicate finder** | SHA-256 byte-identical groups, plus near-duplicates: audio matched on duration, images on pixel dimensions, **perceptual dHash for visually similar pictures**, and fuzzy name matching. Stat strip + size/cross-folder/media filters. Keeper strategies (best quality · newest · oldest · largest · shortest path), thumbnail compare with the keeper ringed green, ignore list, *one per folder*, CSV report, Recycle Bin + undo. |
 | **Batch rename** | Token patterns (`{name} {ext} {counter} {date} {kind} {size} {folder}`), find/replace, case modes, sequence padding, live conflict detection, two-phase commit so `a ↔ b` swaps are safe. |
 | **Folder styles** | 25 glyphs × 20 colours × 16 presets, for **any** directory (not just subfolders of the scan root). Generates a real 16/32/48/256 px `.ico`, writes a quoted `IconResource` `desktop.ini`, applies `attrib +r/+s/+h`, flushes the shell cache with `ie4uinit -show`. Re-applying clears old attributes first, and **Remove style** restores the default look. *Auto-style* picks a look from the dominant file type. |
 | **Folder intelligence** | `buildInsights()` — duplicates, screenshots, large files, stale downloads, installers, junk drawers, similar names, unstyled folders. |
@@ -77,7 +99,8 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 
 ```bash
 cargo tauri dev
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.3.0_x64-setup.exe
+npm run icons        # regenerate every icon from the vector master
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.4.0_x64-setup.exe
 ```
 
 ## How it works
@@ -122,6 +145,7 @@ Rust commands exposed to the frontend:
 | Key | Action |
 | --- | --- |
 | `Ctrl/⌘ + K` | Command palette |
+| `F5` | Rescan (cancellable) |
 | `1`–`6` | Arrange · Duplicates · Rename · Styles · Insights · History |
 | `Ctrl/⌘ + O` | Choose a folder |
 | `F5` | Rescan the current folder |
@@ -138,6 +162,10 @@ Rust commands exposed to the frontend:
   Explorer or hit **Refresh Explorer** in the Styles tab.
 - The interface is pure CSS glass: `backdrop-filter` plus an animated aurora layer. No images,
   no runtime dependency, and it degrades to solid surfaces on machines without backdrop-filter.
+- If the UI feels heavy on a low-power GPU, turn on **Fast mode** (appearance menu). It removes the
+  aurora animation and shrinks the blur radius; the layout is unchanged.
+- Icons are generated, never hand-edited: `npm run icons` rewrites `src-tauri/icons/*` from the SVG
+  in `scripts/make-icon.mjs`.
 
 ## Status
 

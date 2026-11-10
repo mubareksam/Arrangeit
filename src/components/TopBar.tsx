@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { UndoRecord } from "../lib/organizer/types";
+import { BrandMark } from "./BrandMark";
 import { Icon, type IconName } from "./Icon";
 import { Kbd, Spinner } from "./ui";
 
@@ -61,6 +62,8 @@ export function TopBar({
   lastUndo,
   onUndo,
   onPalette,
+  reduceEffects,
+  onReduceEffects,
 }: {
   tab: TabId;
   setTab: (tab: TabId) => void;
@@ -75,6 +78,8 @@ export function TopBar({
   lastUndo: UndoRecord | null;
   onUndo: () => void;
   onPalette: () => void;
+  reduceEffects: boolean;
+  onReduceEffects: (value: boolean) => void;
 }) {
   const [themeOpen, setThemeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -91,9 +96,7 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark" aria-hidden="true">
-          <Icon name="sort" size={15} strokeWidth={2.1} />
-        </div>
+        <BrandMark size={29} />
         <div className="brand-name">ArrangeIt</div>
       </div>
 
@@ -194,6 +197,28 @@ export function TopBar({
                 {theme === item.id ? <Icon name="check" size={12} style={{ marginLeft: "auto" }} /> : null}
               </button>
             ))}
+            <div style={{ height: 1, background: "var(--border-soft)", margin: "4px 2px" }} />
+            <button
+              className="themebtn"
+              onClick={() => onReduceEffects(!reduceEffects)}
+              title="Turns off the aurora animation and backdrop blur for slower machines"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: "1px solid transparent",
+                background: "transparent",
+                color: "var(--text-2)",
+                fontSize: 12,
+                textAlign: "left",
+              }}
+            >
+              <Icon name="zap" size={12} />
+              Fast mode
+              {reduceEffects ? <Icon name="check" size={12} style={{ marginLeft: "auto", color: "var(--accent)" }} /> : null}
+            </button>
           </div>
         ) : null}
       </div>

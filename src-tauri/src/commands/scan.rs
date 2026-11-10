@@ -22,6 +22,12 @@ use walkdir::WalkDir;
 const MAX_FILES: usize = 100_000;
 const MAX_HASH_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PREVIEW_BYTES: u64 = 256 * 1024;
+/// Anything bigger is not worth decoding just to compare it visually.
+const MAX_SIGNATURE_BYTES: u64 = 48 * 1024 * 1024;
+/// Skip absurd resolutions — decoding a 300 MP panorama to 9×8 is a waste of seconds.
+const MAX_SIGNATURE_PIXELS: u64 = 80_000_000;
+/// Counting files inside each subfolder is only a hint for the folder tiles.
+const MAX_FOLDER_SAMPLE: usize = 4000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,7 +250,18 @@ pub async fn image_signatures(paths: Vec<String>) -> Result<Vec<Signature>, Stri
     let signatures: Vec<Signature> = paths
         .par_iter()
         .filter_map(|p| {
-            let image = image::open(p).ok()?;
+            let path = Path::new(p);
+            // Cheap rejects first: no point decoding a 4 GB video or a 200 MP scan.
+            let size = path.metadata().ok()?.len();
+            if size == 0 || size > MAX_SIGNATURE_BYTES {
+                return None;
+            }
+            if let Ok((w, h)) = image::image_dimensions(path) {
+                if u64::from(w) * u64::from(h) > MAX_SIGNATURE_PIXELS {
+                    return None;
+                }
+            }
+            let image = image::open(path).ok()?;
             let luma = image.to_luma8();
             let small = image::imageops::resize(&luma, 9, 8, image::imageops::FilterType::Triangle);
             let mut bits: u64 = 0;
@@ -290,7 +307,7 @@ pub async fn list_folders(path: String) -> Result<Vec<FolderEntry>, String> {
         let mut files = 0usize;
         let mut bytes = 0u64;
         if let Ok(children) = std::fs::read_dir(entry.path()) {
-            for child in children.filter_map(Result::ok) {
+            for child in children.filter_map(Result::ok).take(MAX_FOLDER_SAMPLE) {
                 if let Ok(meta) = child.metadata() {
                     if meta.is_file() {
                         files += 1;
