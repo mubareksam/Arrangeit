@@ -144,21 +144,19 @@ export function TopBar({
         </button>
         {themeOpen ? (
           <div
-            className="fade"
+            className="glass fade"
             style={{
               position: "absolute",
               right: 0,
-              top: 36,
+              top: 38,
               zIndex: 30,
               display: "flex",
               flexDirection: "column",
               gap: 3,
-              padding: 5,
-              minWidth: 138,
-              borderRadius: 11,
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              boxShadow: "var(--shadow-lg)",
+              padding: 6,
+              minWidth: 148,
+              borderRadius: 14,
+              boxShadow: "var(--shadow-lg), inset 0 1px 0 var(--glass-hi)",
             }}
           >
             {THEMES.map((item) => (

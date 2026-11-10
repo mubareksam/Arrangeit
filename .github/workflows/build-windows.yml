@@ -50,28 +50,28 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: ArrangeIt 1.2.0 (Windows x64)
+          tag_name: v1.3.0
+          name: ArrangeIt 1.3.0 (Windows x64)
           body: |
-            **ArrangeIt 1.2.0** — local-first file organizer for Windows x64.
+            **ArrangeIt 1.3.0** — local-first file organizer for Windows x64.
 
-            Run `ArrangeIt_1.2.0_x64-setup.exe`. It **upgrades 1.1.0 in place**
-            (same app id and install folder — you will never end up with two copies).
+            Run `ArrangeIt_1.3.0_x64-setup.exe`. It **upgrades 1.2.0 in place**
+            (same app id and install folder — you never end up with two copies).
 
-            ### New in 1.2.0
-            - **Folder Intelligence** — a to-do list for your folder: duplicates, screenshots,
-              oversized media, stale downloads, installers, junk drawers, near-identical names
-              and unstyled folders, each with a one-click plan you review first.
-            - **Visually similar detection** — perceptual dHash, so resized or re-saved photos
-              are still caught, not just byte-identical copies.
-            - **Style any folder** — 25 icon glyphs × 16 presets, and you can pick a directory
-              *anywhere* on your PC, not only subfolders of the scanned folder. "Auto-style"
-              gives every folder a look based on what's actually inside it.
-            - **Command palette (Ctrl+K)** — every action, tab, theme and folder in one search.
-            - **Much faster** — metadata-only scanning (files are never opened), virtualised file
-              list that stays smooth at 20 000+ files, hashing only runs when you ask for it.
-            - Refreshed UI: breadcrumb path, SVG icon set, four themes, activity history with
-              per-operation restore, and a preview pane that loads detail on demand.
+            ### New in 1.3.0 — the "Frost" interface
+            - **Glassmorphism throughout** — frosted, translucent panels with real backdrop
+              blur, hairline top-light and layered shadows, over a slow-drifting aurora mesh
+              with a film-grain overlay (kills gradient banding).
+            - **Floating glass dock** for the six workspaces, with a glowing gradient pill on
+              the active tab; the whole top bar is now a detached frosted bar.
+            - **Glassy command palette (Ctrl+K)** — deeper blur, bloom around the panel, and
+              a warm accent spotlight on the hovered row.
+            - **Depth on interaction** — cards lift, rows sweep an accent gradient, primary
+              buttons carry an inner highlight and a coloured glow.
+            - **Four themes re-tuned for glass**: Dusk, Midnight, Amber and Paper (the light
+              theme uses a frosted-white recipe so it stays crisp, not milky).
+            - **Accessibility**: `prefers-reduced-motion` disables the aurora drift and all
+              transitions; `prefers-contrast: more` thickens borders and drops translucency.
 
             Everything stays on your PC; deleted files go to the Recycle Bin.
           files: src-tauri/target/release/bundle/nsis/*.exe
