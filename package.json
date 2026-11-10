@@ -1,9 +1,9 @@
 {
   "name": "arrangeit",
   "private": true,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "type": "module",
-  "description": "ArrangeIt — a fast, local-first file organizer for Windows (Tauri + Rust).",
+  "description": "ArrangeIt \u2014 a fast, local-first file organizer for Windows (Tauri + Rust).",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -1,6 +1,17 @@
+import { useMemo } from "react";
 import { humanBytes } from "../../lib/organizer/engine";
 import {
+  PROFESSIONS,
+  PROFESSION_BY_ID,
+  STRUCTURE_VARIANTS,
+  detectProfession,
+  explainGuess,
+  projectKey,
+  variantById,
+} from "../../lib/organizer/structures";
+import {
   DEFAULT_SIZE_RANGES,
+  type AppFile,
   type ArrangeItem,
   type ArrangeMode,
   type ArrangeRule,
@@ -16,6 +27,7 @@ const MODES: { id: ArrangeMode; label: string; icon: IconName; hint: string }[] 
   { id: "similarity", label: "Similar", icon: "sparkles", hint: "Cluster look-alike names" },
   { id: "name", label: "Name", icon: "sort", hint: "Alphabetical folders" },
   { id: "ext", label: "Extension", icon: "file", hint: "One folder per extension" },
+  { id: "profession", label: "Persona", icon: "layers", hint: "Structures built for a specific job" },
 ];
 
 export interface ArrangePreset {
@@ -37,6 +49,7 @@ export function ArrangeTab({
   presets,
   onPreset,
   compact,
+  files,
 }: {
   rule: ArrangeRule;
   setRule: (next: ArrangeRule) => void;
@@ -50,11 +63,32 @@ export function ArrangeTab({
   presets: ArrangePreset[];
   onPreset: (preset: ArrangePreset) => void;
   compact?: boolean;
+  files: AppFile[];
 }) {
   const patch = (next: Partial<ArrangeRule>) => setRule({ ...rule, ...next });
   const collisions = items.filter((i) => i.status === "collision").length;
   const totalBytes = items.reduce((sum, i) => sum + i.file.size, 0);
   const activeMode = MODES.find((mode) => mode.id === rule.mode)!;
+  const activeStructure = variantById(rule.structureId);
+  const activeProfession = PROFESSION_BY_ID[activeStructure.profession];
+  const guess = useMemo(() => detectProfession(files), [files]);
+
+  // The best *shape* for the files in front of us: many distinct projects want
+  // a project-first tree, a long-lived folder wants years, everything else the
+  // flat role folders.
+  const recommended = useMemo(() => {
+    const projects = new Set(files.map((file) => projectKey(file)));
+    const years = new Set(files.map((file) => new Date(file.modified).getFullYear()));
+    if (files.length >= 24 && projects.size >= 4) return "project-groups";
+    if (projects.size >= 6) return "project";
+    if (files.length >= 40 && years.size >= 3) return "groups-year";
+    return "groups";
+  }, [files]);
+
+  const guessedVariant = STRUCTURE_VARIANTS.find(
+    (variant) => variant.profession === guess.profession.id && variant.style === recommended,
+  );
+  const folderCount = new Set(items.map((item) => item.targetFolder)).size;
 
   const toggleRange = (id: string) => {
     const has = rule.sizeRanges.some((range) => range.id === id);
@@ -112,6 +146,71 @@ export function ArrangeTab({
             ))}
           </div>
         </div>
+
+        {rule.mode === "profession" ? (
+          <div className="persona">
+            <div className="persona-head">
+              <span className="label">Who is this folder for?</span>
+              <span className="hint ellipsis">{explainGuess(guess)}</span>
+              <span className="spacer" />
+              {guess.confidence > 0 ? (
+                <button
+                  className="btn sm"
+                  onClick={() => patch({ mode: "profession", structureId: guessedVariant?.id ?? `${guess.profession.id}:groups` })}
+                  title="Apply the detected profession and structure"
+                >
+                  <Icon name="sparkles" size={12} /> Use {guess.profession.label} · {guess.confidence}%
+                </button>
+              ) : null}
+            </div>
+
+            <div className="persona-grid">
+              {PROFESSIONS.map((profession) => {
+                const isActive = profession.id === activeProfession.id;
+                return (
+                  <button
+                    key={profession.id}
+                    className="persona-card"
+                    aria-pressed={isActive}
+                    onClick={() => patch({ structureId: `${profession.id}:${activeStructure.style}` })}
+                    title={profession.blurb}
+                  >
+                    <span className="persona-ico">
+                      <Icon name={profession.icon as IconName} size={14} />
+                    </span>
+                    <span className="persona-text">
+                      <strong>{profession.label}</strong>
+                      <em>{profession.blurb}</em>
+                    </span>
+                    {guess.confidence > 0 && guess.profession.id === profession.id ? <span className="persona-flag">auto</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="persona-variants" role="group" aria-label="Folder structure">
+              <span className="label">Structure</span>
+              {STRUCTURE_VARIANTS.filter((variant) => variant.profession === activeProfession.id).map((variant) => (
+                <button
+                  key={variant.id}
+                  className="chip"
+                  data-active={variant.id === activeStructure.id}
+                  data-suggested={activeStructure.id !== variant.id && variant.style === recommended}
+                  aria-pressed={variant.id === activeStructure.id}
+                  onClick={() => patch({ structureId: variant.id })}
+                  title={variant.style === recommended ? `${variant.description} — recommended for these files` : variant.description}
+                >
+                  {variant.label}
+                  {variant.style === recommended ? <span className="rec">★</span> : null}
+                </button>
+              ))}
+              <span className="spacer" />
+              <span className="hint tnum">
+                {activeStructure.description} · {folderCount} folder{folderCount === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+        ) : null}
 
         <div className="settings">
           {rule.mode === "date" ? (

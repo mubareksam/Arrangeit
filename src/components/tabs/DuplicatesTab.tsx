@@ -11,7 +11,7 @@ import {
   type KeeperStrategy,
 } from "../../lib/organizer/engine";
 import type { DuplicateFilter } from "../../lib/organizer/engine";
-import type { DuplicateGroup, DuplicateOptions } from "../../lib/organizer/types";
+import type { AppFile, DuplicateGroup, DuplicateOptions } from "../../lib/organizer/types";
 import { Icon } from "../Icon";
 import { Badge, Empty, Spinner, Stat, Toggle } from "../ui";
 
@@ -59,6 +59,8 @@ export function DuplicatesTab({
   onDelete,
   onScan,
   onExport,
+  activeId,
+  onPreview,
   busy,
   scanned,
   scannedAt,
@@ -84,6 +86,9 @@ export function DuplicatesTab({
   onDelete: () => void;
   onScan: () => void;
   onExport: () => void;
+  /** Id of the file currently shown in the right-hand preview pane. */
+  activeId: string | null;
+  onPreview: (file: AppFile) => void;
   busy: boolean;
   scanned: boolean;
   scannedAt: string | null;
@@ -263,9 +268,16 @@ export function DuplicatesTab({
                     <>
                       <div className="dup-compare">
                         {group.files.slice(0, 3).map((file) => (
-                          <figure key={file.id} className="dup-card-mini" data-keeper={file.id === keeper}>
+                          <button
+                            key={file.id}
+                            className="dup-card-mini"
+                            data-keeper={file.id === keeper}
+                            data-active={activeId === file.id}
+                            onClick={() => onPreview(file)}
+                            title={`Preview ${file.name} on the right`}
+                          >
                             <Thumb file={file} />
-                            <figcaption>
+                            <span className="dup-mini-cap">
                               <span className="mono ellipsis" title={file.name}>
                                 {file.name}
                               </span>
@@ -273,8 +285,8 @@ export function DuplicatesTab({
                                 {file.width && file.height ? `${file.width}×${file.height} · ` : ""}
                                 {humanBytes(file.size)} · {formatDate(file.modified)}
                               </span>
-                            </figcaption>
-                          </figure>
+                            </span>
+                          </button>
                         ))}
                         {group.files.length > 3 ? (
                           <div className="dup-card-mini more">
@@ -288,7 +300,7 @@ export function DuplicatesTab({
                         const isKeeper = file.id === keeper;
                         const checked = pending.has(file.id);
                         return (
-                          <div className="dup-file" key={file.id} title={file.path}>
+                          <div className="dup-file" key={file.id} title={file.path} data-active={activeId === file.id}>
                             <button
                               className="checkbox"
                               aria-label={`Recycle ${file.name}`}
@@ -303,9 +315,14 @@ export function DuplicatesTab({
                             >
                               <Icon name="check" size={9} strokeWidth={3} />
                             </button>
-                            <span className="mono ellipsis" style={{ minWidth: 0 }}>
-                              {file.folder}\{file.name}
-                            </span>
+                            <button
+                              className="dup-open"
+                              onClick={() => onPreview(file)}
+                              title={`Preview ${file.name} on the right`}
+                            >
+                              <Icon name="image" size={11} />
+                              <span className="mono ellipsis">{file.folder}\{file.name}</span>
+                            </button>
                             <span className="hint tnum">
                               {file.width && file.height ? `${file.width}×${file.height}` : formatDate(file.modified)}
                             </span>
@@ -325,7 +342,8 @@ export function DuplicatesTab({
 
                       <div className="dup-foot">
                         <span className="hint">
-                          {group.confidence}% confidence · keep “{keeperFile.name}” ({strategyHint})
+                          {group.confidence}% confidence · keep “{keeperFile.name}” ({strategyHint}) · click any copy to compare it on
+                          the right
                         </span>
                         <span className="spacer" />
                         <button className="btn sm ghost" onClick={() => setCompare(isCompare ? null : group.id)}>

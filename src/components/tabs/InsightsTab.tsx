@@ -28,12 +28,15 @@ export function InsightsTab({
   insights,
   stats,
   onRun,
+  onShow,
   busy,
   planBusy,
 }: {
   insights: Insight[];
   stats: { files: number; bytes: string; folders: number; reclaimable: string };
   onRun: (insight: Insight) => void;
+  /** Selects the files an insight is about, without running anything. */
+  onShow: (insight: Insight) => void;
   busy: boolean;
   planBusy: string | null;
 }) {
@@ -85,11 +88,17 @@ export function InsightsTab({
                       {insight.impact}
                     </span>
                   ) : null}
-                  <div className="row" style={{ marginTop: 3 }}>
+                  <div className="row wrap" style={{ marginTop: 3, gap: 6 }}>
                     <button className="btn sm" onClick={() => onRun(insight)} disabled={busy || planBusy === insight.id}>
                       {planBusy === insight.id ? <Spinner /> : null}
                       {insight.actionLabel}
                     </button>
+                    {insight.files && insight.files.length > 0 ? (
+                      <button className="btn sm ghost" onClick={() => onShow(insight)} title="Select these files in the list on the left">
+                        <Icon name="search" size={11} />
+                        Show {insight.count ?? insight.files.length} file{(insight.count ?? insight.files.length) === 1 ? "" : "s"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </article>

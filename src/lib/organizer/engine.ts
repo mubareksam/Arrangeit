@@ -20,6 +20,7 @@ import {
   type DuplicateGroup,
   type DuplicateOptions,
   type FileKind,
+  type FolderRenameRow,
   type FolderStyle,
   type Insight,
   type RenameOptions,
@@ -28,6 +29,7 @@ import {
   type StylePreset,
   type StyleStep,
 } from "./types";
+import { folderForStructure } from "./structures";
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -116,7 +118,12 @@ export function normalizeStem(name: string): string {
   return stemOf(name)
     .toLowerCase()
     .replace(/\((?:copy|copie|\d+)\)/g, " ")
+    .replace(/\[(?:copy|copie|\d+)\]/g, " ")
+    // "song copy 2", "song - copy", "song_final_v3" all collapse to "song".
+    .replace(/\b(copy|copie|final|export|edit|master)\b\s*\d*$/g, " ")
     .replace(/\bcopy\b/g, " ")
+    .replace(/[\s._-]v\d+$/g, " ")
+    .replace(/(?:[\s._-]\d{1,2}){1,2}$/g, " ")
     .replace(/^\s*\d{1,3}[\s._-]+/, " ")
     .replace(/[\s._-]+/g, " ")
     .trim();
@@ -244,6 +251,16 @@ export function arrangePreview(files: AppFile[], rule: ArrangeRule, basePath = "
         });
       }
     }
+  } else if (rule.mode === "profession") {
+    for (const file of files) {
+      const targetFolder = folderForStructure(file, rule.structureId);
+      items.push({
+        file,
+        targetFolder,
+        targetPath: `${root}\\${targetFolder.replace(/\//g, "\\")}\\${file.name}`,
+        status: "ok",
+      });
+    }
   } else {
     for (const file of files) {
       const targetFolder = bucketFor(file, rule);
@@ -256,18 +273,24 @@ export function arrangePreview(files: AppFile[], rule: ArrangeRule, basePath = "
     }
   }
 
+  // Drop no-op moves: a file already sitting in its planned folder must not
+  // create an empty folder just to be "moved" onto itself.
+  const meaningful = items.filter(
+    (item) => item.file.path.toLowerCase() !== item.targetPath.toLowerCase(),
+  );
+
   // Collision detection: two selected files landing on the same name+folder.
   const seen = new Map<string, number>();
-  for (const item of items) {
+  for (const item of meaningful) {
     const key = `${item.targetFolder}\\${item.file.name}`.toLowerCase();
     seen.set(key, (seen.get(key) ?? 0) + 1);
   }
-  for (const item of items) {
+  for (const item of meaningful) {
     const key = `${item.targetFolder}\\${item.file.name}`.toLowerCase();
     if ((seen.get(key) ?? 0) > 1) item.status = "collision";
   }
 
-  return items.sort(
+  return meaningful.sort(
     (a, b) => a.targetFolder.localeCompare(b.targetFolder, undefined, { numeric: true }) || byName(a.file, b.file),
   );
 }
@@ -337,9 +360,12 @@ export function findDuplicates(files: AppFile[], options: DuplicateOptions): Dup
 
   // 2. Near-duplicates by kind: audio metadata, image resolution, fuzzy names.
   const candidates = files.filter((f) => !claimed.has(f.id));
-  const modes: { match: "audio" | "image" | "name"; kinds: FileKind[]; enabled: boolean }[] = [
+  const modes: { match: "audio" | "image" | "video" | "name"; kinds: FileKind[]; enabled: boolean }[] = [
     { match: "audio", kinds: ["audio"], enabled: options.byAudio },
     { match: "image", kinds: ["image"], enabled: options.byImage },
+    // Two exports of the same cut share a duration to within a frame or two —
+    // stronger evidence than a similar file name, and it catches renamed renders.
+    { match: "video", kinds: ["video"], enabled: options.byAudio || options.byImage },
     { match: "name", kinds: ["image", "video", "audio", "document", "archive", "code", "other"], enabled: options.byName },
   ];
 
@@ -371,8 +397,28 @@ export function findDuplicates(files: AppFile[], options: DuplicateOptions): Dup
           first.width === second.width &&
           first.height === second.height;
 
+        // Videos: identical length and frame size is a re-export of the same cut.
+        const sameCut =
+          mode.match === "video" &&
+          first.duration !== undefined &&
+          second.duration !== undefined &&
+          Math.abs(first.duration - second.duration) <= 2 &&
+          (!first.width || !second.width || (first.width === second.width && first.height === second.height));
+
+        // A same-name pair whose sizes are within 2% is almost always the same
+        // asset re-saved; a pair 25× apart is usually a different asset that
+        // merely shares a name, so the size band guards against that.
+        const sizeBand =
+          first.size > 0 && second.size > 0
+            ? Math.max(first.size, second.size) / Math.min(first.size, second.size)
+            : Infinity;
+        const sameSize = sizeBand <= 1.02;
+        const implausible = mode.match === "name" && sizeBand > 25 && first.kind === second.kind;
+
         const floor = mode.match === "image" ? Math.min(options.fuzzy, 60) : options.fuzzy;
-        const score = Math.max(nameScore, sameDuration ? 95 : 0, sameFrame ? Math.max(nameScore, 70) : 0);
+        let score = Math.max(nameScore, sameDuration ? 95 : 0, sameFrame ? Math.max(nameScore, 70) : 0, sameCut ? 96 : 0);
+        if (sameSize && nameScore >= 70) score = Math.max(score, 92);
+        if (implausible && score < 96) score = 0;
         if (score >= floor) {
           cluster.push(second);
           best = Math.max(best, score);
@@ -512,6 +558,7 @@ export const MATCH_LABEL: Record<DuplicateGroup["match"], string> = {
   exact: "Byte-identical",
   audio: "Same audio",
   image: "Same picture",
+  video: "Same cut",
   visual: "Visually similar",
   name: "Similar name",
 };
@@ -604,6 +651,55 @@ export function applyRename(files: AppFile[], options: RenameOptions): RenameRow
     const key = `${row.file.folder}\\${row.nextName}`.toLowerCase();
     if ((used.get(key) ?? 0) > 1) row.conflict = true;
     if (!row.nextName.trim()) row.error = "Empty name";
+  }
+  return rows;
+}
+
+/** Pattern → folder name. Same tokens as files, minus anything extension-shaped. */
+export function buildFolderName(name: string, options: RenameOptions, index: number): string {
+  const tokens: Record<string, string> = {
+    "{name}": name,
+    "{counter}": `${index}`.padStart(options.seqPadding, "0"),
+    "{folder}": name,
+    "{ext}": "",
+    "{date}": "",
+    "{yyyy}": "",
+    "{mm}": "",
+    "{kind}": "Folder",
+    "{size}": "",
+  };
+  let out = options.pattern || "{name}";
+  for (const [token, value] of Object.entries(tokens)) out = out.split(token).join(value);
+  if (options.find) out = out.split(options.find).join(options.replace);
+  out = applyCase(out, options.caseMode);
+  // A folder name must not end in a dot or a space on Windows.
+  return sanitizeName(out).replace(/[.\s]+$/, "");
+}
+
+/** Plans folder renames with the same pattern engine files use. */
+export function applyFolderRename(
+  folders: { id?: string; name: string; path: string }[],
+  options: RenameOptions,
+): FolderRenameRow[] {
+  const ordered = [...folders].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const rows: FolderRenameRow[] = ordered.map((folder, index) => {
+    // Folders have no extension, so the pattern engine runs without one.
+    const nextName = buildFolderName(folder.name, options, options.startIndex + index);
+    return { id: folder.id ?? folder.path, name: folder.name, path: folder.path, nextName, changed: nextName !== folder.name, conflict: false };
+  });
+
+  const used = new Map<string, number>();
+  for (const row of rows) {
+    const parent = row.path.replace(/[\\/][^\\/]+$/, "");
+    const key = `${parent}\\${row.nextName}`.toLowerCase();
+    used.set(key, (used.get(key) ?? 0) + 1);
+  }
+  for (const row of rows) {
+    const parent = row.path.replace(/[\\/][^\\/]+$/, "");
+    const key = `${parent}\\${row.nextName}`.toLowerCase();
+    if ((used.get(key) ?? 0) > 1) row.conflict = true;
+    if (!row.nextName.trim()) row.error = "Empty name";
+    if (/[\\/:*?"<>|]/.test(row.nextName)) row.error = "Illegal character";
   }
   return rows;
 }
@@ -830,6 +926,7 @@ export function buildInsights(
       impact: `${humanBytes(reclaimable)} reclaimable`,
       actionLabel: "Review duplicates",
       target: "duplicates",
+      files: groups.flatMap((group) => group.files.map((file) => file.id)),
       count: groups.reduce((sum, group) => sum + group.files.length - 1, 0),
     });
   }
@@ -845,6 +942,7 @@ export function buildInsights(
       actionLabel: "Group photos by month",
       target: "arrange",
       rule: { mode: "date", dateGranularity: "month" },
+      files: screenshots.map((file) => file.id),
       count: screenshots.length,
     });
   }
@@ -860,6 +958,7 @@ export function buildInsights(
       actionLabel: "Plan by size",
       target: "arrange",
       rule: { mode: "size", sizeRanges: DEFAULT_SIZE_RANGES.slice(3) },
+      files: big.map((file) => file.id),
       count: big.length,
     });
   }
@@ -875,6 +974,7 @@ export function buildInsights(
       actionLabel: "Group by year",
       target: "arrange",
       rule: { mode: "date", dateGranularity: "year" },
+      files: stale.map((file) => file.id),
       count: stale.length,
     });
   }
@@ -892,6 +992,7 @@ export function buildInsights(
       actionLabel: "Group by extension",
       target: "arrange",
       rule: { mode: "ext" },
+      files: installers.map((file) => file.id),
       count: installers.length,
     });
   }
@@ -917,6 +1018,7 @@ export function buildInsights(
       target: "arrange",
       rule: { mode: "type" },
       folder: undefined,
+      files: entry.inner.map((file) => file.id),
       count: entry.inner.length,
     });
   }
@@ -933,7 +1035,25 @@ export function buildInsights(
       actionLabel: "Cluster similar names",
       target: "arrange",
       rule: { mode: "similarity", similarityThreshold: 85 },
+      files: clusters.flatMap(([, group]) => group.map((file) => file.id)),
       count: clusters.length,
+    });
+  }
+
+  // The single heaviest file, clickable straight from the insight card.
+  const heaviest = [...files].sort((a, b) => b.size - a.size)[0];
+  if (heaviest && heaviest.size >= 50 * 1024 * 1024) {
+    const share = files.reduce((sum, file) => sum + file.size, 0);
+    insights.push({
+      id: "heaviest",
+      kind: "large",
+      title: `Largest file: ${heaviest.name}`,
+      detail: `${humanBytes(heaviest.size)} — ${Math.round((heaviest.size / Math.max(1, share)) * 100)}% of this folder. It lives in ${heaviest.folder}.`,
+      impact: humanBytes(heaviest.size),
+      actionLabel: "Show it",
+      target: "files",
+      files: [heaviest.id],
+      count: 1,
     });
   }
 
@@ -954,6 +1074,7 @@ export function buildInsights(
       target: "styles",
       folder: unstyled.name,
       preset,
+      files: inner.map((file) => file.id),
       count: unstyled.files,
     });
   }

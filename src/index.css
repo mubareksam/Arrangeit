@@ -20,6 +20,13 @@
   --glass-lo: rgb(255 255 255 / 0.022);
   --sheen: linear-gradient(180deg, var(--glass-hi), var(--glass-lo));
 
+  /* Frosted texture: fine grain layered under a tinted fill, so a surface reads
+     as glass with a body instead of a hole cut in the window. */
+  --grain: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.06 0'/></filter><rect width='140' height='140' filter='url(%23g)'/></svg>");
+  --glass-fill-a: rgb(30 40 62 / 0.62);
+  --glass-fill-b: rgb(12 18 30 / 0.52);
+  --glass-edge: rgb(255 255 255 / 0.14);
+
   --shadow-sm: 0 2px 6px rgb(2 6 15 / 0.35);
   --shadow: 0 26px 60px -34px rgb(0 0 0 / 0.9), 0 2px 8px rgb(2 6 15 / 0.4);
   --shadow-lg: 0 50px 90px -40px rgb(0 0 0 / 0.95), 0 4px 14px rgb(2 6 15 / 0.5);
@@ -61,6 +68,9 @@
   --warn: #f5c352;
   --danger: #ff8393;
   --media-bg: rgb(4 8 14 / 0.6);
+  --glass-fill-a: rgb(30 41 64 / 0.66);
+  --glass-fill-b: rgb(10 16 28 / 0.56);
+  --glass-edge: rgb(255 255 255 / 0.13);
 }
 
 /* -------------------------------- midnight ------------------------------- */
@@ -94,6 +104,9 @@
   --warn: #facc15;
   --danger: #fb7185;
   --media-bg: rgb(2 8 7 / 0.6);
+  --glass-fill-a: rgb(18 38 33 / 0.66);
+  --glass-fill-b: rgb(6 16 14 / 0.56);
+  --glass-edge: rgb(220 255 245 / 0.12);
 }
 
 /* --------------------------------- amber --------------------------------- */
@@ -127,6 +140,9 @@
   --warn: #fbbf24;
   --danger: #fb7185;
   --media-bg: rgb(10 6 3 / 0.6);
+  --glass-fill-a: rgb(52 34 18 / 0.64);
+  --glass-fill-b: rgb(24 14 7 / 0.56);
+  --glass-edge: rgb(255 235 205 / 0.12);
 }
 
 /* --------------------------------- paper --------------------------------- */
@@ -163,6 +179,9 @@
   --warn: #a25a06;
   --danger: #cf2036;
   --media-bg: rgb(255 255 255 / 0.55);
+  --glass-fill-a: rgb(255 255 255 / 0.72);
+  --glass-fill-b: rgb(240 246 255 / 0.6);
+  --glass-edge: rgb(255 255 255 / 0.9);
 
   --shadow-sm: 0 2px 6px rgb(24 44 80 / 0.08);
   --shadow: 0 26px 54px -34px rgb(24 44 80 / 0.35), 0 2px 8px rgb(24 44 80 / 0.06);
@@ -330,22 +349,48 @@ button {
 /* Frosted primitives                                                 */
 /* ================================================================== */
 
+/*
+ * Frosted glass, not a transparent rectangle.
+ *  layer 1  grain            → the physical "frost" texture
+ *  layer 2  top edge light   → the lit rim of a pane
+ *  layer 3  tinted fill      → a body, so the aurora behind is only implied
+ * Backdrop blur + saturation then fuses the whole thing with the wallpaper.
+ */
 .glass,
 .topbar,
 .panel,
 .tabs,
 .toast,
 .palette,
-.banner,
+.banner {
+  position: relative;
+  background-color: var(--glass-fill-b);
+  background-image:
+    var(--grain),
+    linear-gradient(180deg, var(--glass-edge), transparent 30%),
+    linear-gradient(180deg, var(--glass-fill-a), var(--glass-fill-b));
+  background-size: 140px 140px, 100% 100%, 100% 100%;
+  background-blend-mode: overlay, normal, normal;
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--blur)) saturate(165%) brightness(1.04);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(165%) brightness(1.04);
+  box-shadow:
+    var(--shadow),
+    inset 0 1px 0 var(--glass-hi),
+    inset 0 0 0 1px rgb(255 255 255 / 0.02),
+    inset 0 -18px 40px -32px rgb(0 0 0 / 0.6);
+}
+
+/* Nested media wells stay flatter than the pane that holds them. */
 .media,
 .codebox,
 .textprev {
   background: var(--surface);
   background-image: var(--sheen);
   border: 1px solid var(--glass-border);
-  backdrop-filter: blur(var(--blur)) saturate(160%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(160%);
-  box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi);
+  backdrop-filter: blur(10px) saturate(130%);
+  -webkit-backdrop-filter: blur(10px) saturate(130%);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
 }
 
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
@@ -1089,6 +1134,19 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
+.files-head .search {
+  min-width: 0;
+  height: 32px;
+}
+
+/* The "All" button matches the search field's height exactly. */
+.files-head > .btn {
+  flex: 0 0 auto;
+  height: 32px;
+  min-width: 46px;
+  justify-content: center;
+}
+
 .search {
   flex: 1 1 auto;
   display: flex;
@@ -1129,11 +1187,47 @@ button {
 
 .filterbar {
   display: flex;
-  gap: 4px;
-  padding: 7px 9px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 11px;
   border-bottom: 1px solid var(--border-soft);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  /* Fade the right edge so a clipped chip reads as "scroll", not "broken". */
+  mask-image: linear-gradient(90deg, #000 94%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 94%, transparent 100%);
+}
+
+/* Every category chip is the same height and baseline, icon or not. */
+.filterbar .chip {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 11px;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1;
+  justify-content: center;
+  align-items: center;
+  scroll-snap-align: start;
+}
+
+.filterbar .chip svg {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+
+.filterbar .chip .tnum {
+  padding-left: 2px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.01em;
+}
+
+.filterbar .chip[data-active="true"] .tnum {
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
 }
 
 .filterbar::-webkit-scrollbar {
@@ -2428,6 +2522,381 @@ button {
 /* Fast mode — same layout, none of the GPU cost                      */
 /* ================================================================== */
 
+/* ================================================================== */
+/* 1.5 — personas, audition, about, duplicate preview hooks            */
+/* ================================================================== */
+
+/* ---- profession structures ---- */
+
+.persona {
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: color-mix(in srgb, var(--surface-2) 30%, transparent);
+}
+
+.persona-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 6px;
+}
+
+.persona-card {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  text-align: left;
+  border-radius: 11px;
+  border: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  color: var(--text-2);
+  transition: border-color 0.16s, background 0.16s, box-shadow 0.16s, transform 0.16s var(--ease);
+}
+
+.persona-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.persona-card[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: linear-gradient(180deg, var(--accent-soft), color-mix(in srgb, var(--surface-2) 70%, transparent));
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 12px 26px -22px var(--accent-glow);
+  color: var(--text);
+}
+
+.persona-ico {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+  color: var(--accent);
+}
+
+.persona-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.persona-text strong {
+  font-size: 11.5px;
+  font-weight: 620;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.persona-text em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.persona-flag {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 99px;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 28%, transparent);
+  font-weight: 700;
+}
+
+.persona-variants {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.persona-variants .chip {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.persona-variants .chip .rec {
+  font-size: 9px;
+  color: var(--warn);
+  line-height: 1;
+}
+
+.persona-variants .chip[data-suggested="true"] {
+  border-style: dashed;
+  color: var(--text-2);
+}
+
+/* ---- audition ---- */
+
+.audition-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 99px;
+  padding: 1px 7px;
+}
+
+.files-foot .chip[data-active="true"] {
+  color: var(--accent);
+}
+
+/* ---- duplicate review → preview ---- */
+
+.dup-card-mini {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 3px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s var(--ease);
+}
+
+.dup-card-mini:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.dup-card-mini[data-active="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 10px 22px -20px var(--accent-glow);
+}
+
+.dup-mini-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-2);
+  text-align: left;
+}
+
+.dup-file[data-active="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.dup-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.dup-open:hover {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.dup-open svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+/* ---- about ---- */
+
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(2 5 12 / 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fade-in 0.18s var(--ease);
+}
+
+.about {
+  width: min(560px, 100%);
+  border-radius: var(--r-xl);
+  padding: 20px 22px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--glass-hi);
+  animation: pop-in 0.2s var(--ease);
+}
+
+.about-hero {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.about-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+}
+
+.about-name {
+  margin: 0;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+}
+
+.about-tag {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.about-credit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: linear-gradient(90deg, var(--accent-soft), color-mix(in srgb, var(--surface-2) 60%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.about-credit strong {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.about-credit svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 5px 12px;
+  padding: 8px 2px;
+}
+
+.about-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.about-key kbd {
+  flex: 0 0 auto;
+  min-width: 58px;
+  text-align: center;
+  font-family: var(--font);
+  font-size: 10.5px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.18);
+}
+
+.about-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* The brand lock-up is now a button — keep it looking like the old mark. */
+button.brand {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: opacity 0.15s;
+}
+
+button.brand:hover {
+  opacity: 0.86;
+}
+
+button.brand:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+/* ================================================================== */
+/* Responsiveness                                                     */
+/* ================================================================== */
+
+@media (max-width: 1180px) {
+  .persona-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  }
+}
+
+@media (max-width: 940px) {
+  .persona-grid {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  }
+  .persona-text em {
+    display: none;
+  }
+}
+
 [data-perf="low"] .aurora {
   display: none;
 }
@@ -2441,13 +2910,22 @@ button {
 [data-perf="low"] .tabs,
 [data-perf="low"] .palette,
 [data-perf="low"] .toast,
-[data-perf="low"] .banner,
+[data-perf="low"] .banner {
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  /* Fast mode drops the blur cost, not the glass identity: the grain stays. */
+  background-color: color-mix(in srgb, var(--glass-fill-b) 88%, var(--bg));
+  background-image: var(--grain), linear-gradient(180deg, var(--glass-fill-a), var(--glass-fill-b));
+  background-size: 140px 140px, 100% 100%;
+  background-blend-mode: overlay, normal;
+}
+
 [data-perf="low"] .media,
 [data-perf="low"] .codebox,
 [data-perf="low"] .textprev {
-  backdrop-filter: blur(8px) saturate(120%);
-  -webkit-backdrop-filter: blur(8px) saturate(120%);
-  background-color: color-mix(in srgb, var(--bg) 88%, var(--surface-3));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: color-mix(in srgb, var(--bg) 86%, var(--surface-3));
   background-image: none;
 }
 

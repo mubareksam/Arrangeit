@@ -6,8 +6,9 @@
 
 use crate::model::{move_file, sanitize_segment, uniquify, AppFile, UndoOp, UndoRecord};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +44,8 @@ pub async fn execute_arrange(
     let mut entries = Vec::new();
     let mut undo_entries = Vec::new();
     let mut undo_ops: Vec<UndoOp> = Vec::new();
+    // Directories this run created, so a failed move never leaves an empty folder behind.
+    let mut created_dirs: BTreeSet<PathBuf> = BTreeSet::new();
 
     for item in &items {
         if item.status != "ok" {
@@ -55,12 +58,22 @@ pub async fn execute_arrange(
             continue;
         }
 
-        let folder = sanitize_segment(&item.target_folder);
-        let dest_dir = root.join(&folder);
+        // Structures can nest ("Client/01_Design"), so every segment is sanitised
+        // separately and folded into a real path.
+        let folder_label = item.target_folder.clone();
+        let dest_dir = item
+            .target_folder
+            .split(['/', '\\'])
+            .filter(|segment| !segment.trim().is_empty())
+            .fold(root.clone(), |path, segment| path.join(sanitize_segment(segment)));
+        if dest_dir == root {
+            // Nothing to do: the file is already where the plan wants it.
+            continue;
+        }
         let dest = uniquify(&dest_dir, &item.file.name);
 
-        entries.push(format!("{}  →  {}\\", item.file.name, folder));
-        undo_entries.push(format!("{}\\{}  ⟵  {}", folder, item.file.name, item.file.name));
+        entries.push(format!("{}  →  {}\\", item.file.name, folder_label));
+        undo_entries.push(format!("{}\\{}  ⟵  {}", folder_label, item.file.name, item.file.name));
         undo_ops.push(UndoOp {
             from: source.to_string_lossy().to_string(),
             to: dest.to_string_lossy().to_string(),
@@ -70,15 +83,26 @@ pub async fn execute_arrange(
             continue;
         }
 
-        fs::create_dir_all(&dest_dir).map_err(|e| format!("Cannot create {}: {e}", dest_dir.display()))?;
+        if !dest_dir.exists() {
+            fs::create_dir_all(&dest_dir).map_err(|e| format!("Cannot create {}: {e}", dest_dir.display()))?;
+            created_dirs.insert(dest_dir.clone());
+        }
+
         let result = if copying { fs::copy(&source, &dest).map(|_| ()) } else { move_file(&source, &dest) };
         match result {
             Ok(()) => performed += 1,
             Err(error) => {
                 failures += 1;
                 eprintln!("arrange: {} -> {} failed: {error}", source.display(), dest.display());
+                // Roll back a folder we just made for a move that never happened.
+                prune_empty(&dest_dir, &mut created_dirs);
             }
         }
+    }
+
+    // Any bucket that ended up with nothing in it is removed again.
+    for dir in created_dirs.iter().rev() {
+        remove_if_empty(dir);
     }
 
     let undo = if dry_run || performed == 0 {
@@ -99,6 +123,35 @@ pub async fn execute_arrange(
     };
 
     Ok(ArrangeOutcome { action, performed, failures, entries, undo })
+}
+
+fn remove_if_empty(dir: &Path) {
+    let empty = fs::read_dir(dir).map(|mut entries| entries.next().is_none()).unwrap_or(false);
+    if empty {
+        let _ = fs::remove_dir(dir);
+    }
+}
+
+/// Removes `dir` (and its emptied parents) only if this run created it.
+fn prune_empty(dir: &Path, created: &mut BTreeSet<PathBuf>) {
+    let mut current = dir.to_path_buf();
+    loop {
+        if !created.contains(&current) {
+            break;
+        }
+        let empty = fs::read_dir(&current).map(|mut entries| entries.next().is_none()).unwrap_or(false);
+        if !empty {
+            break;
+        }
+        if fs::remove_dir(&current).is_err() {
+            break;
+        }
+        created.remove(&current);
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
 }
 
 #[derive(Serialize)]

@@ -113,6 +113,28 @@ export async function inspectFile(path: string): Promise<FileInfo> {
   };
 }
 
+/** Renames folders — the native side uses the same two-phase commit as files. */
+export async function renameFolders(pairs: { from: string; to: string }[], dryRun = false): Promise<RenameOutcome> {
+  if (isTauri()) {
+    return invokeTauri<RenameOutcome>("rename_files", { pairs, dryRun });
+  }
+  await wait(220);
+  return {
+    renamed: dryRun ? 0 : pairs.length,
+    failures: 0,
+    errors: [],
+    undo: dryRun
+      ? null
+      : {
+          id: `undo-${Date.now()}`,
+          kind: "rename",
+          label: `Renamed ${pairs.length} folder${pairs.length === 1 ? "" : "s"}`,
+          entries: pairs.map((pair) => `${pair.from} → ${pair.to}`),
+          ops: pairs.map((pair) => ({ from: pair.from, to: pair.to })),
+        },
+  };
+}
+
 export interface HashEntry {
   path: string;
   hash: string;
