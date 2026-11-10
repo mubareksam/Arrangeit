@@ -836,6 +836,13 @@ export default function App() {
 
   return (
     <div className="app">
+      <div className="aurora" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </div>
+      <div className="noise" aria-hidden="true" />
+
       <TopBar
         tab={tab}
         setTab={setTab}
@@ -992,7 +999,7 @@ export default function App() {
         <button className="btn sm ghost" onClick={() => setPaletteOpen(true)}>
           <Icon name="command" size={11} /> K
         </button>
-        <span>v1.2.0</span>
+        <span>v1.3.0</span>
       </footer>
 
       {toast ? (

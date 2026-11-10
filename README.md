@@ -4,10 +4,10 @@
 
 Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript** for the UI. Nothing leaves your machine.
 
-> ### ⬇ [Download ArrangeIt 1.2.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.2.0/ArrangeIt_1.2.0_x64-setup.exe)
-> Run `ArrangeIt_1.2.0_x64-setup.exe` — no Rust, Node or other tooling required.
-> Already on 1.0.0/1.1.0? Just run it: the installer upgrades in place (same app id + install
-> folder), so you never end up with two copies.
+> ### ⬇ [Download ArrangeIt 1.3.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.3.0/ArrangeIt_1.3.0_x64-setup.exe)
+> Run `ArrangeIt_1.3.0_x64-setup.exe` — no Rust, Node or other tooling required.
+> Already on an older version? Just run it: the installer upgrades in place (same app id +
+> install folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
 
 ```
@@ -17,6 +17,22 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
  └───────────────┴────────────────────────────────────────────┴────────────────┘
     Ctrl+K opens the command palette from anywhere.
 ```
+
+## What's new in 1.3.0 — the "Frost" interface
+
+- **Glassmorphism done properly** — every panel is a frosted layer
+  (`backdrop-filter: blur(26px) saturate(160%)`) with a hairline top-light, a 20 px corner
+  radius and a layered shadow. Behind them sits a slow-drifting **aurora mesh** (three blurred
+  colour fields, 34–52 s loops) plus an SVG **film-grain** overlay so big gradients never band.
+- **Floating dock + detached top bar** — the six workspaces live in a glass pill; the active tab
+  gets a gradient wash, an accent ring and a soft glow.
+- **Interaction depth** — file rows sweep an accent gradient with an inset left edge, insight
+  cards lift and catch a spotlight, primary buttons carry an inner highlight and a coloured bloom.
+- **Command palette** — 40 px blur, bloom behind the sheet, accent-tinted hover row.
+- **Four glass themes** — Dusk, Midnight, Amber and the light **Paper** (frosted white, no glow)
+  so the same layout stays crisp in daylight.
+- **Respects your settings** — `prefers-reduced-motion` stops the aurora and every transition;
+  `prefers-contrast: more` removes translucency and thickens borders.
 
 ## What's new in 1.2.0
 
@@ -44,7 +60,7 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
 | **Folder styles** | 25 glyphs × 20 colours × 16 presets, for **any** directory (not just subfolders of the scan root). Generates a real 16/32/48/256 px `.ico`, writes a quoted `IconResource` `desktop.ini`, applies `attrib +r/+s/+h`, flushes the shell cache with `ie4uinit -show`. Re-applying clears old attributes first, and **Remove style** restores the default look. *Auto-style* picks a look from the dominant file type. |
 | **Folder intelligence** | `buildInsights()` — duplicates, screenshots, large files, stale downloads, installers, junk drawers, similar names, unstyled folders. |
 | **Preview** | Real previews via Tauri's asset protocol: image thumbnails, inline video playback, audio playback with a waveform decoded from the actual file, plus text previews, metadata and the planned destination. |
-| **Themes** | Dusk, Midnight, Amber and Paper, persisted per machine. |
+| **Themes** | Dusk, Midnight, Amber and Paper, persisted per machine. Every theme is a glass recipe: translucent surfaces, aurora mesh, film grain. |
 | **Command palette** | `Ctrl+K` — every action, tab, theme and folder in one fuzzy search. |
 | **Undo & export** | Every run records a reversible op; undo moves files back on disk. Arrange and rename plans export to CSV. |
 
@@ -61,7 +77,7 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 
 ```bash
 cargo tauri dev
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.2.0_x64-setup.exe
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.3.0_x64-setup.exe
 ```
 
 ## How it works
@@ -120,6 +136,8 @@ Rust commands exposed to the frontend:
   In the browser demo you only get placeholders — real files need the desktop build.
 - Windows caches folder icons aggressively. If a new icon does not appear, press **F5** in
   Explorer or hit **Refresh Explorer** in the Styles tab.
+- The interface is pure CSS glass: `backdrop-filter` plus an animated aurora layer. No images,
+  no runtime dependency, and it degrades to solid surfaces on machines without backdrop-filter.
 
 ## Status
 
