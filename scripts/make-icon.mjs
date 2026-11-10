@@ -3,13 +3,13 @@
  *
  *   node scripts/make-icon.mjs
  *
- * The mark: a frosted gradient tile with a folder cut from it, and an arrow
- * punched *through* the folder in the tile's own gradient (a true negative
- * space hole, not a painted arrow). It reads at 16 px because the folder
- * silhouette survives while the arrow becomes a bright notch.
+ * The mark: a single geometric "A" — the ArrangeIt monogram — in warm white on a
+ * frosted violet gradient tile. A letter survives 16 px better than any pictogram:
+ * there is nothing to decode, no folder to mistake it for, and it reads as a brand
+ * rather than a generic file utility.
  *
  * The .ico writer is hand-rolled on purpose: Windows only honours PNG-compressed
- * entries at 256 px, so 16/32/48/64/128 must be classic 32-bit DIBs.
+ * entries at 256 px, so 16/24/32/48/64/128 must be classic 32-bit DIBs.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,58 +20,52 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const icons = join(root, "src-tauri", "icons");
 mkdirSync(icons, { recursive: true });
 
-const DIB_SIZES = [16, 24, 32, 48, 64, 128];
-const PNG_256 = 256;
-
-const buildSvg = ({ stroke, head }) => `<?xml version="1.0" encoding="UTF-8"?>
+const buildSvg = ({ stroke }) => `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="tile" gradientUnits="userSpaceOnUse" x1="96" y1="64" x2="928" y2="976">
-      <stop offset="0" stop-color="#6D9BFF"/>
-      <stop offset="0.52" stop-color="#7C7BFF"/>
-      <stop offset="1" stop-color="#A26BF5"/>
+    <linearGradient id="tile" gradientUnits="userSpaceOnUse" x1="96" y1="48" x2="936" y2="984">
+      <stop offset="0" stop-color="#5F86FF"/>
+      <stop offset="0.52" stop-color="#7C6BFF"/>
+      <stop offset="1" stop-color="#B15CF2"/>
     </linearGradient>
-    <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="512" y1="0" x2="512" y2="560">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.34"/>
+    <linearGradient id="sheen" gradientUnits="userSpaceOnUse" x1="512" y1="0" x2="512" y2="640">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.32"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="96" y1="64" x2="928" y2="976">
-      <stop offset="0" stop-color="#4E7CF7"/>
-      <stop offset="1" stop-color="#8C4FF0"/>
+    <linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="330" y1="250" x2="700" y2="780">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#EFEAFF"/>
     </linearGradient>
   </defs>
 
   <rect width="1024" height="1024" rx="228" fill="url(#tile)"/>
-  <rect width="1024" height="560" rx="228" fill="url(#sheen)"/>
-  <rect x="3" y="3" width="1018" height="1018" rx="226" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="6"/>
+  <rect width="1024" height="620" rx="228" fill="url(#sheen)"/>
+  <path d="M-120 700L460 -120h150L30 700z" fill="#ffffff" opacity="0.06"/>
+  <rect x="3" y="3" width="1018" height="1018" rx="226" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="6"/>
 
-  <g transform="translate(0,-40)">
-    <!-- folder, white -->
-    <path fill="#ffffff" d="M246 348h150a44 44 0 0 1 31 13l47 51h304a56 56 0 0 1 56 56v284a56 56 0 0 1-56 56H246a56 56 0 0 1-56-56V404a56 56 0 0 1 56-56z"/>
-
-    <!-- arrow punched through the folder: same gradient = real hole -->
-    <g fill="none" stroke="url(#ink)" stroke-width="62" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M400 712V560h158"/>
-    </g>
-    <path fill="url(#ink)" d="M${572 - head / 2} ${496 - head / 2}l${118 + head} ${64 + head / 2}-${118 + head} ${64 + head / 2}z"/>
+  <g fill="none" stroke="url(#ink)" stroke-width="${stroke}" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M352 762L512 262L672 762"/>
+    <path d="M420 586h184"/>
   </g>
 </svg>`;
 
-/** Small sizes get a bolder arrow so the mark survives 16 px. */
-const FINE = buildSvg({ stroke: 62, head: 0 });
-const BOLD = buildSvg({ stroke: 92, head: 34 });
+/** Small sizes get a heavier stroke so the A stays solid at 16 px. */
+const FINE = buildSvg({ stroke: 108 });
+const BOLD = buildSvg({ stroke: 132 });
 
-const masterFor = (svg, density = 384) => sharp(Buffer.from(svg), { density });
-const master = masterFor(FINE);
-const boldMaster = masterFor(BOLD);
+// Rasterise each master exactly once: librsvg is the slow part of this script.
+const rasterise = async (svg) => sharp(Buffer.from(svg), { density: 384 }).png().toBuffer();
+const master = await rasterise(FINE);
+const boldMaster = await rasterise(BOLD);
+const masterAt = (size) =>
+  sharp(size <= 48 ? boldMaster : master).resize(size, size, { kernel: "lanczos3" });
+
+const DIB_SIZES = [16, 24, 32, 48, 64, 128];
+const PNG_256 = 256;
+
 
 async function rgba(size) {
-  const source = size <= 48 ? boldMaster : master;
-  const { data } = await sharp(await source.png().toBuffer())
-    .resize(size, size, { fit: "cover", kernel: "lanczos3" })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
+  const { data } = await masterAt(size).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   return data;
 }
 
@@ -107,10 +101,7 @@ async function buildIco() {
   for (const size of DIB_SIZES) {
     entries.push({ size, data: dib(await rgba(size), size) });
   }
-  entries.push({
-    size: PNG_256,
-    data: await sharp(await master.png().toBuffer()).resize(PNG_256, PNG_256).png().toBuffer(),
-  });
+  entries.push({ size: PNG_256, data: await masterAt(PNG_256).png().toBuffer() });
 
   const dir = Buffer.alloc(6);
   dir.writeUInt16LE(0, 0);
@@ -136,11 +127,7 @@ async function buildIco() {
 }
 
 const png = async (size, file) => {
-  const source = size <= 48 ? boldMaster : master;
-  const buffer = await sharp(await source.png().toBuffer())
-    .resize(size, size, { kernel: "lanczos3" })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  const buffer = await masterAt(size).png({ compressionLevel: 9 }).toBuffer();
   writeFileSync(join(icons, file), buffer);
   return buffer.length;
 };
@@ -164,6 +151,6 @@ await png(50, "StoreLogo.png");
 
 // A preview PNG for the README / docs.
 mkdirSync(join(root, "docs"), { recursive: true });
-await sharp(await master.png().toBuffer()).resize(512, 512).png().toFile(join(root, "docs", "icon.png"));
+await masterAt(512).png().toFile(join(root, "docs", "icon.png"));
 
 console.log("icons written:", DIB_SIZES.join(", "), "+", PNG_256, "(png)");

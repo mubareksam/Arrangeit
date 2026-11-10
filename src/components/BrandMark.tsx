@@ -1,6 +1,6 @@
 /**
- * The ArrangeIt mark, as live vector UI (not an image): the same folder + punched
- * arrow as the app icon, so the window and the taskbar agree.
+ * The ArrangeIt mark as live vector UI: the same geometric "A" monogram as the
+ * application icon, so the window, the taskbar and the installer agree.
  */
 export function BrandMark({ size = 29 }: { size?: number }) {
   return (
@@ -8,31 +8,25 @@ export function BrandMark({ size = 29 }: { size?: number }) {
       width={size}
       height={size}
       viewBox="0 0 1024 1024"
-      aria-hidden="true"
-      focusable="false"
-      style={{ display: "block", filter: "drop-shadow(0 6px 14px rgb(0 0 0 / 0.35))" }}
+      aria-label="ArrangeIt"
+      role="img"
+      style={{ display: "block", filter: "drop-shadow(0 4px 10px rgb(0 0 0 / 0.28))" }}
     >
       <defs>
-        <linearGradient id="brand-tile" gradientUnits="userSpaceOnUse" x1="96" y1="64" x2="928" y2="976">
+        <linearGradient id="brand-tile" gradientUnits="userSpaceOnUse" x1="96" y1="48" x2="936" y2="984">
           <stop offset="0" stopColor="var(--accent)" />
           <stop offset="1" stopColor="var(--accent-2)" />
         </linearGradient>
-        <linearGradient id="brand-hole" gradientUnits="userSpaceOnUse" x1="96" y1="64" x2="928" y2="976">
-          <stop offset="0" stopColor="var(--accent)" />
-          <stop offset="1" stopColor="var(--accent-2)" />
+        <linearGradient id="brand-sheen" gradientUnits="userSpaceOnUse" x1="512" y1="0" x2="512" y2="640">
+          <stop offset="0" stopColor="#fff" stopOpacity="0.32" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
         </linearGradient>
       </defs>
       <rect width="1024" height="1024" rx="228" fill="url(#brand-tile)" />
-      <rect width="1024" height="520" rx="228" fill="#fff" opacity="0.22" />
-      <g transform="translate(0,-40)">
-        <path
-          fill="#fff"
-          d="M246 348h150a44 44 0 0 1 31 13l47 51h304a56 56 0 0 1 56 56v284a56 56 0 0 1-56 56H246a56 56 0 0 1-56-56V404a56 56 0 0 1 56-56z"
-        />
-        <g fill="none" stroke="url(#brand-hole)" strokeWidth="72" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M400 712V560h158" />
-        </g>
-        <path fill="url(#brand-hole)" d="M572 496l118 64-118 64z" />
+      <rect width="1024" height="620" rx="228" fill="url(#brand-sheen)" />
+      <g fill="none" stroke="#fff" strokeWidth="118" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M352 762L512 262L672 762" />
+        <path d="M420 586h184" />
       </g>
     </svg>
   );
