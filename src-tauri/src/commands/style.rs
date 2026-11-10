@@ -77,6 +77,29 @@ fn in_polygon(px: f32, py: f32, points: &[(f32, f32)]) -> bool {
     inside
 }
 
+
+fn in_rect(x: f32, y: f32, x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
+    x >= x0 && x <= x1 && y >= y0 && y <= y1
+}
+
+fn in_ring(x: f32, y: f32, cx: f32, cy: f32, outer: f32, inner: f32) -> bool {
+    in_circle(x, y, cx, cy, outer) && !in_circle(x, y, cx, cy, inner)
+}
+
+fn near_segment(x: f32, y: f32, ax: f32, ay: f32, bx: f32, by: f32, width: f32) -> bool {
+    let dx = bx - ax;
+    let dy = by - ay;
+    let length_sq = dx * dx + dy * dy;
+    let t = if length_sq == 0.0 {
+        0.0
+    } else {
+        (((x - ax) * dx + (y - ay) * dy) / length_sq).clamp(0.0, 1.0)
+    };
+    let px = ax + t * dx;
+    let py = ay + t * dy;
+    (x - px).powi(2) + (y - py).powi(2) <= width * width
+}
+
 fn star_points(cx: f32, cy: f32, outer: f32, inner: f32) -> Vec<(f32, f32)> {
     (0..10)
         .map(|i| {
@@ -88,24 +111,95 @@ fn star_points(cx: f32, cy: f32, outer: f32, inner: f32) -> Vec<(f32, f32)> {
 }
 
 fn glyph_hit(glyph: &str, x: f32, y: f32) -> bool {
-    let star = star_points(32.0, 36.0, 15.0, 6.2);
+    let star = star_points(32.0, 36.0, 14.5, 6.0);
     match glyph {
         "star" => in_polygon(x, y, &star),
-        "film" => in_polygon(x, y, &[(24.0, 26.0), (24.0, 48.0), (42.0, 37.0)]),
-        "book" => in_rounded_rect(x, y, 24.0, 26.0, 31.0, 48.0, 1.0) || in_rounded_rect(x, y, 33.0, 26.0, 40.0, 48.0, 1.0),
+        "film" => in_polygon(x, y, &[(25.0, 26.0), (25.0, 47.0), (42.0, 36.5)]),
+        "book" => in_rounded_rect(x, y, 23.0, 25.0, 30.5, 48.0, 1.5) || in_rounded_rect(x, y, 33.5, 25.0, 41.0, 48.0, 1.5),
         "music" => {
-            in_circle(x, y, 24.0, 45.0, 5.0)
-                || in_circle(x, y, 38.0, 41.0, 5.0)
-                || in_rounded_rect(x, y, 37.0, 24.0, 41.0, 42.0, 1.0)
-                || in_rounded_rect(x, y, 23.0, 28.0, 27.0, 46.0, 1.0)
-                || in_rounded_rect(x, y, 25.0, 25.0, 41.0, 30.0, 2.0)
+            in_circle(x, y, 24.0, 45.0, 4.8)
+                || in_circle(x, y, 38.0, 41.5, 4.8)
+                || near_segment(x, y, 27.0, 45.0, 27.0, 28.0, 1.8)
+                || near_segment(x, y, 41.0, 41.5, 41.0, 25.0, 1.8)
+                || in_rect(x, y, 27.0, 25.0, 41.0, 29.0)
         }
         "camera" => {
-            (in_circle(x, y, 32.0, 37.0, 9.0) && !in_circle(x, y, 32.0, 37.0, 4.2))
-                || in_rounded_rect(x, y, 26.0, 22.0, 38.0, 27.0, 2.0)
+            (in_ring(x, y, 32.0, 37.0, 9.5, 4.6)) || in_rounded_rect(x, y, 26.0, 21.5, 38.0, 26.0, 2.0)
         }
-        "briefcase" => in_rounded_rect(x, y, 22.0, 28.0, 42.0, 46.0, 3.0) || in_rounded_rect(x, y, 28.0, 23.0, 36.0, 29.0, 2.0),
-        "flask" => in_polygon(x, y, &[(27.0, 25.0), (37.0, 25.0), (44.0, 48.0), (20.0, 48.0)]),
+        "briefcase" => {
+            in_rounded_rect(x, y, 21.0, 27.0, 43.0, 46.0, 3.0) || in_rounded_rect(x, y, 28.0, 22.5, 36.0, 28.5, 2.0)
+        }
+        "flask" => in_polygon(x, y, &[(27.0, 24.0), (37.0, 24.0), (44.0, 47.0), (20.0, 47.0)]),
+        "heart" => {
+            in_circle(x, y, 27.0, 32.0, 5.4) || in_circle(x, y, 37.0, 32.0, 5.4)
+                || in_polygon(x, y, &[(21.0, 33.0), (43.0, 33.0), (32.0, 47.0)])
+        }
+        "bolt" => in_polygon(x, y, &[(35.0, 21.0), (26.0, 35.0), (32.0, 35.0), (29.0, 50.0), (41.0, 32.0), (34.0, 32.0)]),
+        "cloud" => {
+            in_circle(x, y, 25.0, 36.0, 6.0) || in_circle(x, y, 33.0, 32.0, 8.0) || in_circle(x, y, 41.0, 36.5, 6.0)
+                || in_rect(x, y, 24.0, 35.0, 42.0, 42.0)
+        }
+        "shield" => in_polygon(x, y, &[(32.0, 20.0), (43.0, 25.0), (43.0, 35.0), (32.0, 49.0), (21.0, 35.0), (21.0, 25.0)]),
+        "gear" => {
+            (in_ring(x, y, 32.0, 36.0, 13.0, 7.0) && !in_circle(x, y, 32.0, 36.0, 4.0))
+                || in_rect(x, y, 29.5, 20.0, 34.5, 25.0)
+                || in_rect(x, y, 29.5, 47.0, 34.5, 52.0)
+                || in_rect(x, y, 16.0, 33.5, 21.0, 38.5)
+                || in_rect(x, y, 43.0, 33.5, 48.0, 38.5)
+        }
+        "leaf" => {
+            in_polygon(x, y, &[(25.0, 45.0), (24.0, 33.0), (33.0, 25.0), (43.0, 28.0), (41.0, 38.0), (31.0, 46.0)])
+                || near_segment(x, y, 25.0, 45.0, 20.0, 51.0, 1.6)
+        }
+        "flame" => in_polygon(x, y, &[(32.0, 21.0), (38.0, 31.0), (36.0, 33.0), (40.0, 37.0), (39.0, 44.0), (32.0, 50.0), (25.0, 45.0), (26.0, 37.0), (30.0, 33.0), (28.0, 29.0)]),
+        "moon" => in_circle(x, y, 32.0, 36.0, 12.0) && !in_circle(x, y, 38.5, 31.5, 10.5),
+        "sun" => {
+            in_ring(x, y, 32.0, 36.0, 8.0, 5.0)
+                || (0..8).any(|i| {
+                    let angle = i as f32 * std::f32::consts::PI / 4.0;
+                    let (sin, cos) = angle.sin_cos();
+                    near_segment(x, y, 32.0 + 10.0 * cos, 36.0 + 10.0 * sin, 32.0 + 15.0 * cos, 36.0 + 15.0 * sin, 1.5)
+                })
+        }
+        "plane" => in_polygon(x, y, &[(19.0, 41.0), (44.0, 23.0), (44.0, 29.5), (34.0, 37.5), (38.0, 47.0), (32.0, 45.0), (27.0, 40.0)]),
+        "cart" => {
+            in_rounded_rect(x, y, 22.0, 29.0, 38.0, 41.0, 2.0)
+                || in_circle(x, y, 26.0, 46.0, 3.0)
+                || in_circle(x, y, 36.0, 46.0, 3.0)
+                || near_segment(x, y, 22.0, 29.0, 17.0, 24.0, 1.7)
+        }
+        "home" => {
+            in_polygon(x, y, &[(32.0, 22.0), (45.0, 34.0), (19.0, 34.0)])
+                || in_rect(x, y, 24.0, 34.0, 40.0, 48.0)
+                || in_rect(x, y, 29.0, 40.0, 35.0, 48.0)
+        }
+        "key" => {
+            in_ring(x, y, 25.0, 38.0, 7.0, 3.2)
+                || in_rect(x, y, 30.0, 36.4, 45.0, 39.6)
+                || in_rect(x, y, 40.0, 39.6, 43.0, 44.0)
+                || in_rect(x, y, 35.0, 39.6, 37.0, 43.0)
+        }
+        "clock" => {
+            in_ring(x, y, 32.0, 36.0, 12.0, 9.6)
+                || near_segment(x, y, 32.0, 36.0, 32.0, 28.5, 1.5)
+                || near_segment(x, y, 32.0, 36.0, 38.0, 39.0, 1.5)
+        }
+        "layers" => {
+            in_polygon(x, y, &[(32.0, 22.0), (44.0, 29.0), (32.0, 36.0), (20.0, 29.0)])
+                || in_polygon(x, y, &[(32.0, 28.0), (44.0, 35.0), (32.0, 42.0), (20.0, 35.0)])
+                || in_polygon(x, y, &[(32.0, 34.0), (44.0, 41.0), (32.0, 48.0), (20.0, 41.0)])
+        }
+        "terminal" => {
+            in_rounded_rect(x, y, 19.0, 25.0, 45.0, 47.0, 3.0)
+                && !in_rounded_rect(x, y, 22.0, 28.0, 42.0, 44.0, 2.0)
+                || in_polygon(x, y, &[(26.0, 31.0), (33.0, 36.0), (26.0, 41.0)])
+                || in_rect(x, y, 35.0, 39.0, 41.0, 41.0)
+        }
+        "gamepad" => {
+            in_rounded_rect(x, y, 19.0, 30.0, 45.0, 45.0, 6.0)
+                || in_circle(x, y, 26.0, 37.5, 3.2)
+                || in_circle(x, y, 38.0, 37.5, 3.2)
+        }
         _ => false,
     }
 }
@@ -348,7 +442,10 @@ pub fn refresh_icon_cache() -> bool {
 
 #[tauri::command]
 pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool) -> Result<StyleOutcome, String> {
-    let folder = Path::new(&root).join(&style.folder);
+    let folder = match style.path.as_deref() {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => Path::new(&root).join(&style.folder),
+    };
     if !folder.is_dir() {
         return Err(format!("Folder not found: {}", folder.display()));
     }
@@ -449,8 +546,11 @@ pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool)
 
 /// Removes a custom folder icon and restores Windows' default folder look.
 #[tauri::command]
-pub async fn reset_folder_style(root: String, folder: String) -> Result<Vec<StyleStep>, String> {
-    let target = Path::new(&root).join(&folder);
+pub async fn reset_folder_style(root: String, folder: String, path: Option<String>) -> Result<Vec<StyleStep>, String> {
+    let target = match path.as_deref() {
+        Some(value) if !value.is_empty() => PathBuf::from(value),
+        _ => Path::new(&root).join(&folder),
+    };
     if !target.is_dir() {
         return Err(format!("Folder not found: {}", target.display()));
     }

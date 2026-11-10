@@ -11,6 +11,7 @@ import {
   ALL_EXTENSIONS,
   DEFAULT_SIZE_RANGES,
   KIND_CONFIG,
+  STYLE_PRESETS,
   type AppFile,
   type ArrangeItem,
   type ArrangeRule,
@@ -20,9 +21,11 @@ import {
   type DuplicateOptions,
   type FileKind,
   type FolderStyle,
+  type Insight,
   type RenameOptions,
   type RenameRow,
   type SizeRange,
+  type StylePreset,
   type StyleStep,
 } from "./types";
 
@@ -296,6 +299,7 @@ export const DEFAULT_DUPLICATE_OPTIONS: DuplicateOptions = {
   byHash: true,
   byAudio: true,
   byImage: true,
+  byVisual: true,
   byName: false,
   fuzzy: 80,
 };
@@ -407,6 +411,7 @@ export const MATCH_LABEL: Record<DuplicateGroup["match"], string> = {
   exact: "Byte-identical",
   audio: "Same audio",
   image: "Same picture",
+  visual: "Visually similar",
   name: "Similar name",
 };
 
@@ -589,4 +594,268 @@ export function gradientFor(seed: string, color: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return `linear-gradient(135deg, ${color} 0%, hsl(${h} 70% 45%) 55%, hsl(${(h + 55) % 360} 65% 30%) 100%)`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Perceptual hashing (dHash)                                          */
+/* ------------------------------------------------------------------ */
+
+/** Number of differing bits between two 16-hex dHash signatures. */
+export function hamming(a: string, b: string): number {
+  let diff = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+    const xor = parseInt(a[i], 16) ^ parseInt(b[i], 16);
+    diff += ((xor & 1) + ((xor >> 1) & 1) + ((xor >> 2) & 1) + ((xor >> 3) & 1));
+  }
+  return diff;
+}
+
+export interface SignatureEntry {
+  path: string;
+  hash: string;
+}
+
+/**
+ * Groups images whose dHash differs by at most `threshold` bits (0–64).
+ * This catches re-saves, resizes, crops-adjacent shots and renamed copies that
+ * byte-level hashing can never match.
+ */
+export function clusterSignatures(entries: SignatureEntry[], threshold = 8): SignatureEntry[][] {
+  const clusters: SignatureEntry[][] = [];
+  for (const entry of entries) {
+    const hit = clusters.find((cluster) => hamming(cluster[0].hash, entry.hash) <= threshold);
+    if (hit) hit.push(entry);
+    else clusters.push([entry]);
+  }
+  return clusters.filter((cluster) => cluster.length > 1);
+}
+
+/**
+ * Turns perceptual signatures into duplicate groups. Files already grouped by a
+ * stronger signal (exact hash) are skipped by the caller via `exclude`.
+ */
+export function visualDuplicateGroups(
+  entries: SignatureEntry[],
+  files: AppFile[],
+  threshold = 10,
+  exclude: Set<string> = new Set(),
+): DuplicateGroup[] {
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const usable = entries.filter((entry) => !exclude.has(entry.path) && byPath.has(entry.path));
+  const clusters = clusterSignatures(usable, threshold);
+
+  return clusters.map((cluster) => {
+    const groupFiles = cluster
+      .map((entry) => byPath.get(entry.path))
+      .filter((file): file is AppFile => Boolean(file))
+      .sort(byName);
+    const average =
+      cluster.reduce((sum, entry) => sum + hamming(cluster[0].hash, entry.hash), 0) / Math.max(1, cluster.length);
+    return {
+      id: uid("dup"),
+      label: groupFiles[0]?.name ?? "Similar images",
+      match: "visual" as const,
+      confidence: Math.round(Math.max(55, 100 - average * 4)),
+      size: groupFiles[0]?.size ?? 0,
+      files: groupFiles,
+      reclaimable: groupFiles.slice(1).reduce((sum, file) => sum + file.size, 0),
+    };
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Folder intelligence                                                 */
+/* ------------------------------------------------------------------ */
+
+export function dominantKind(files: AppFile[]): FileKind {
+  const counts = new Map<FileKind, number>();
+  for (const file of files) {
+    if (file.kind === "other") continue;
+    counts.set(file.kind, (counts.get(file.kind) ?? 0) + 1);
+  }
+  let best: FileKind = "other";
+  let bestCount = 0;
+  for (const [kind, count] of counts) {
+    if (count > bestCount) {
+      best = kind;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+export function presetForKind(kind: FileKind): StylePreset {
+  const byId = (id: string) => STYLE_PRESETS.find((preset) => preset.id === id) ?? STYLE_PRESETS[0];
+  switch (kind) {
+    case "image":
+      return byId("images");
+    case "audio":
+      return byId("audio");
+    case "video":
+      return byId("video");
+    case "document":
+      return byId("docs");
+    case "code":
+      return byId("code");
+    case "archive":
+      return byId("archive");
+    default:
+      return byId("archive");
+  }
+}
+
+const DAY = 86_400_000;
+
+/**
+ * Turns the folder contents into a short, ranked to-do list. Everything here is
+ * derived from data the app already has — no telemetry, no AI service.
+ */
+export function buildInsights(
+  files: AppFile[],
+  folders: { name: string; files: number; bytes: number }[],
+  groups: DuplicateGroup[],
+  styledFolders: Set<string>,
+): Insight[] {
+  const insights: Insight[] = [];
+  const now = Date.now();
+
+  const reclaimable = groups.reduce((sum, group) => sum + group.reclaimable, 0);
+  if (reclaimable > 0) {
+    insights.push({
+      id: "duplicates",
+      kind: "duplicates",
+      title: `${groups.length} duplicate group${groups.length === 1 ? "" : "s"}`,
+      detail: "Byte-identical or visually similar copies are safe to recycle — keep one of each.",
+      impact: `${humanBytes(reclaimable)} reclaimable`,
+      actionLabel: "Review duplicates",
+      target: "duplicates",
+      count: groups.reduce((sum, group) => sum + group.files.length - 1, 0),
+    });
+  }
+
+  const screenshots = files.filter((file) => /screenshot|screen[ -]?shot|snip|grab|frame \d{4}/i.test(file.name));
+  if (screenshots.length >= 5) {
+    insights.push({
+      id: "screenshots",
+      kind: "screenshots",
+      title: `${screenshots.length} screenshots are loose`,
+      detail: "They bury real photos in the same folder. Grouping by month usually fixes the scroll.",
+      impact: humanBytes(screenshots.reduce((sum, file) => sum + file.size, 0)),
+      actionLabel: "Group photos by month",
+      target: "arrange",
+      rule: { mode: "date", dateGranularity: "month" },
+      count: screenshots.length,
+    });
+  }
+
+  const big = files.filter((file) => file.size >= 100 * 1024 * 1024);
+  if (big.length > 0) {
+    insights.push({
+      id: "large",
+      kind: "large",
+      title: `${big.length} file${big.length === 1 ? "" : "s"} over 100 MB`,
+      detail: "These dominate your disk usage. Bucket them by size, then move the huge ones to a spare drive.",
+      impact: humanBytes(big.reduce((sum, file) => sum + file.size, 0)),
+      actionLabel: "Plan by size",
+      target: "arrange",
+      rule: { mode: "size", sizeRanges: DEFAULT_SIZE_RANGES.slice(3) },
+      count: big.length,
+    });
+  }
+
+  const stale = files.filter((file) => now - new Date(file.modified).getTime() > 3 * 365 * DAY);
+  if (stale.length >= 5) {
+    insights.push({
+      id: "stale",
+      kind: "stale",
+      title: `${stale.length} files untouched for 3+ years`,
+      detail: "A year-based archive keeps the active folder light without deleting anything.",
+      impact: humanBytes(stale.reduce((sum, file) => sum + file.size, 0)),
+      actionLabel: "Group by year",
+      target: "arrange",
+      rule: { mode: "date", dateGranularity: "year" },
+      count: stale.length,
+    });
+  }
+
+  const installers = files.filter(
+    (file) => /\.(exe|msi|zip|rar|7z|iso)$/i.test(file.name) && now - new Date(file.modified).getTime() > 90 * DAY,
+  );
+  if (installers.length >= 3) {
+    insights.push({
+      id: "installers",
+      kind: "installers",
+      title: `${installers.length} old installers and archives`,
+      detail: "Probably already installed or extracted. One folder by extension keeps them findable.",
+      impact: humanBytes(installers.reduce((sum, file) => sum + file.size, 0)),
+      actionLabel: "Group by extension",
+      target: "arrange",
+      rule: { mode: "ext" },
+      count: installers.length,
+    });
+  }
+
+  // A folder that mixes many kinds is a junk drawer.
+  const junkDrawers = folders
+    .map((folder) => {
+      const inner = files.filter((file) => file.folder === folder.name);
+      return { folder, kinds: new Set(inner.map((file) => file.kind)), inner };
+    })
+    .filter((entry) => entry.inner.length >= 15 && entry.kinds.size >= 5)
+    .sort((a, b) => b.kinds.size - a.kinds.size)
+    .slice(0, 2);
+
+  for (const entry of junkDrawers) {
+    insights.push({
+      id: `mixed-${entry.folder.name}`,
+      kind: "mixed",
+      title: `${entry.folder.name} mixes ${entry.kinds.size} file types`,
+      detail: "A classic junk drawer. Sorting by type takes one run and is fully reversible.",
+      impact: `${entry.inner.length} files`,
+      actionLabel: "Tidy by type",
+      target: "arrange",
+      rule: { mode: "type" },
+      folder: undefined,
+      count: entry.inner.length,
+    });
+  }
+
+  const clusters = [...similarityBuckets(files, 85).entries()].filter(([, group]) => group.length >= 3);
+  if (clusters.length > 0) {
+    const biggest = clusters.sort((a, b) => b[1].length - a[1].length)[0];
+    insights.push({
+      id: "similar",
+      kind: "similar",
+      title: `${clusters.length} look-alike name cluster${clusters.length === 1 ? "" : "s"}`,
+      detail: `“${biggest[0]}” alone has ${biggest[1].length} variants — probably duplicates or versions.`,
+      impact: `${clusters.reduce((sum, [, group]) => sum + group.length, 0)} files`,
+      actionLabel: "Cluster similar names",
+      target: "arrange",
+      rule: { mode: "similarity", similarityThreshold: 85 },
+      count: clusters.length,
+    });
+  }
+
+  // Style nudge: the biggest unstyled folder gets a suggested preset.
+  const unstyled = folders
+    .filter((folder) => !styledFolders.has(folder.name) && folder.files >= 3)
+    .sort((a, b) => b.files - a.files)[0];
+  if (unstyled) {
+    const inner = files.filter((file) => file.folder === unstyled.name);
+    const preset = presetForKind(dominantKind(inner));
+    insights.push({
+      id: `unstyled-${unstyled.name}`,
+      kind: "unstyled",
+      title: `${unstyled.name} has no icon yet`,
+      detail: `Mostly ${KIND_CONFIG[dominantKind(inner)].plural.toLowerCase()} — the “${preset.label}” badge fits.`,
+      impact: `${unstyled.files} files`,
+      actionLabel: "Style it",
+      target: "styles",
+      folder: unstyled.name,
+      preset,
+      count: unstyled.files,
+    });
+  }
+
+  return insights;
 }

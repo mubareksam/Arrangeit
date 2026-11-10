@@ -1,7 +1,11 @@
-import { useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { formatDate, humanBytes } from "../lib/organizer/engine";
 import { KIND_CONFIG, type AppFile, type FileKind } from "../lib/organizer/types";
+import { Icon, KIND_ICON } from "./Icon";
 import { Empty, FileGlyph, Spinner, Toggle } from "./ui";
+
+const ROW = 48;
+const OVERSCAN = 6;
 
 export function FileList({
   files,
@@ -32,15 +36,28 @@ export function FileList({
 }) {
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<FileKind | "all">("all");
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewport, setViewport] = useState(720);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const deferredQuery = useDeferredValue(query);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    setViewport(el.clientHeight);
+    const observer = new ResizeObserver(() => setViewport(el.clientHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     return files.filter((file) => {
       if (kindFilter !== "all" && file.kind !== kindFilter) return false;
       if (!q) return true;
       return `${file.name} ${file.folder}`.toLowerCase().includes(q);
     });
-  }, [files, query, kindFilter]);
+  }, [files, deferredQuery, kindFilter]);
 
   const kindCounts = useMemo(() => {
     const counts = new Map<FileKind, number>();
@@ -55,11 +72,16 @@ export function FileList({
 
   const allVisibleSelected = visible.length > 0 && visible.every((f) => selected.has(f.id));
 
+  // Windowed rendering keeps 20 000-file folders at 60 fps.
+  const start = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
+  const end = Math.min(visible.length, Math.ceil((scrollTop + viewport) / ROW) + OVERSCAN);
+  const windowed = visible.slice(start, end);
+
   return (
     <>
       <div className="files-head">
         <div className="search">
-          <span aria-hidden="true">⌕</span>
+          <Icon name="search" size={13} />
           <input
             id="file-search"
             value={query}
@@ -67,6 +89,11 @@ export function FileList({
             placeholder="Search files"
             aria-label="Search files"
           />
+          {query ? (
+            <button className="clear" onClick={() => setQuery("")} aria-label="Clear search">
+              <Icon name="close" size={12} />
+            </button>
+          ) : null}
         </div>
         <button
           className="btn sm ghost"
@@ -84,13 +111,8 @@ export function FileList({
             All <span className="tnum">{files.length}</span>
           </button>
           {kindCounts.map(([kind, count]) => (
-            <button
-              key={kind}
-              className="chip"
-              data-active={kindFilter === kind}
-              onClick={() => setKindFilter(kind)}
-            >
-              <span className="kinddot" style={{ background: KIND_CONFIG[kind].color }} />
+            <button key={kind} className="chip" data-active={kindFilter === kind} onClick={() => setKindFilter(kind)}>
+              <Icon name={KIND_ICON[kind] ?? "file"} size={11} />
               {KIND_CONFIG[kind].plural}
               <span className="tnum">{count}</span>
             </button>
@@ -98,62 +120,73 @@ export function FileList({
         </div>
       ) : null}
 
-      <div className="filelist" role="listbox" aria-multiselectable="true">
+      <div
+        className="filelist"
+        role="listbox"
+        aria-multiselectable="true"
+        ref={listRef}
+        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      >
         {files.length === 0 ? (
           <Empty
+            icon={busy ? "scan" : "folder"}
             title={root ? (busy ? "Scanning…" : "This folder is empty") : "No folder selected"}
             hint={
               root
-                ? "Nothing to arrange here. Pick another folder, or turn on “Include subfolders”."
-                : "Choose a folder and ArrangeIt reads it locally — nothing is uploaded."
+                ? "Nothing to arrange here. Pick another folder, or turn on “Subfolders”."
+                : "ArrangeIt reads the folder on your PC. Nothing is uploaded, ever."
             }
             action={
               root ? null : (
-                <button className="btn primary sm" onClick={onPick}>
+                <button className="btn primary sm" onClick={onPick} style={{ marginTop: 6 }}>
                   Choose folder
                 </button>
               )
             }
           />
         ) : visible.length === 0 ? (
-          <Empty title="No matches" hint="Try a different search or clear the type filter." />
+          <Empty icon="search" title="No matches" hint="Try a different search or clear the type filter." />
         ) : (
-          visible.map((file) => {
-            const checked = selected.has(file.id);
-            return (
-              <button
-                key={file.id}
-                className="filerow"
-                data-active={activeId === file.id}
-                data-checked={checked}
-                role="option"
-                aria-selected={checked}
-                title={file.path}
-                onClick={(e) => {
-                  onActivate(file.id);
-                  if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-                  onToggle(file.id);
-                }}
-                onDoubleClick={() => onToggle(file.id)}
-              >
-                <span className="checkbox" aria-hidden="true">
-                  ✓
-                </span>
-                <FileGlyph kind={file.kind} />
-                <span className="filemain">
-                  <span className="filename">{file.name}</span>
-                  <span className="filemeta">
-                    <span className="kinddot" style={{ background: KIND_CONFIG[file.kind].color }} />
-                    {humanBytes(file.size)}
-                    <span aria-hidden="true">·</span>
-                    {formatDate(file.modified)}
-                    <span aria-hidden="true">·</span>
-                    <span className="ellipsis">{file.folder}</span>
-                  </span>
-                </span>
-              </button>
-            );
-          })
+          <div className="virtual" style={{ height: visible.length * ROW }}>
+            {windowed.map((file, index) => {
+              const checked = selected.has(file.id);
+              const top = (start + index) * ROW;
+              return (
+                <div key={file.id} style={{ position: "absolute", top, left: 0, right: 0, height: ROW }}>
+                  <button
+                    className="filerow"
+                    data-active={activeId === file.id}
+                    data-checked={checked}
+                    role="option"
+                    aria-selected={checked}
+                    title={file.path}
+                    style={{ height: "100%" }}
+                    onClick={(e) => {
+                      onActivate(file.id);
+                      if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+                      onToggle(file.id);
+                    }}
+                    onDoubleClick={() => onToggle(file.id)}
+                  >
+                    <span className="checkbox" aria-hidden="true">
+                      <Icon name="check" size={9} strokeWidth={3} />
+                    </span>
+                    <FileGlyph kind={file.kind} />
+                    <span className="filemain">
+                      <span className="filename">{file.name}</span>
+                      <span className="filemeta">
+                        {humanBytes(file.size)}
+                        <span aria-hidden="true">·</span>
+                        {formatDate(file.modified)}
+                        <span aria-hidden="true">·</span>
+                        <span className="ellipsis">{file.folder}</span>
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -166,8 +199,9 @@ export function FileList({
         <Toggle checked={recursive} onChange={onRecursiveChange} label="Subfolders" />
       </div>
       {demo ? (
-        <div className="files-foot" style={{ borderTop: 0, paddingTop: 0 }}>
-          <span className="hint">Demo data — install the desktop app to browse real folders.</span>
+        <div className="files-foot" style={{ borderTop: 0, paddingTop: 0, color: "var(--warn)" }}>
+          <Icon name="info" size={12} />
+          <span>Demo data — install the desktop app for real folders</span>
         </div>
       ) : null}
     </>

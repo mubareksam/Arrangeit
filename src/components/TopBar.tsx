@@ -1,23 +1,51 @@
 import { useEffect, useRef, useState } from "react";
 import type { UndoRecord } from "../lib/organizer/types";
-import { Spinner } from "./ui";
+import { Icon, type IconName } from "./Icon";
+import { Kbd, Spinner } from "./ui";
 
-export type TabId = "arrange" | "duplicates" | "rename" | "folders" | "log";
+export type TabId = "arrange" | "duplicates" | "rename" | "folders" | "insights" | "log";
 
-export const TABS: { id: TabId; label: string; glyph: string }[] = [
-  { id: "arrange", label: "Arrange", glyph: "⇄" },
-  { id: "duplicates", label: "Duplicates", glyph: "⧉" },
-  { id: "rename", label: "Rename", glyph: "✎" },
-  { id: "folders", label: "Styles", glyph: "◧" },
-  { id: "log", label: "Activity", glyph: "≡" },
+export const TABS: { id: TabId; label: string; icon: IconName }[] = [
+  { id: "arrange", label: "Arrange", icon: "sort" },
+  { id: "duplicates", label: "Duplicates", icon: "duplicate" },
+  { id: "rename", label: "Rename", icon: "pencil" },
+  { id: "folders", label: "Styles", icon: "folder" },
+  { id: "insights", label: "Insights", icon: "sparkles" },
+  { id: "log", label: "History", icon: "history" },
 ];
 
 export const THEMES: { id: string; label: string; chip: string }[] = [
-  { id: "dusk", label: "Dusk", chip: "linear-gradient(140deg,#5b9dff,#7c8cff)" },
-  { id: "midnight", label: "Midnight", chip: "linear-gradient(140deg,#2dd4bf,#34d399)" },
-  { id: "amber", label: "Amber", chip: "linear-gradient(140deg,#f0a03c,#e8743c)" },
+  { id: "dusk", label: "Dusk", chip: "linear-gradient(140deg,#5b9dff,#8b7bff)" },
+  { id: "midnight", label: "Midnight", chip: "linear-gradient(140deg,#2dd4bf,#4ade80)" },
+  { id: "amber", label: "Amber", chip: "linear-gradient(140deg,#f0a03c,#ec7b45)" },
   { id: "paper", label: "Paper", chip: "linear-gradient(140deg,#ffffff,#dbe4f0)" },
 ];
+
+function Crumbs({ root, demo, onPick }: { root: string; demo: boolean; onPick: () => void }) {
+  const parts = root ? root.split(/[\\/]+/).filter(Boolean) : [];
+  const shown = parts.slice(-2);
+  return (
+    <div className="crumbs">
+      {parts.length === 0 ? (
+        <button className="crumb last" onClick={onPick}>
+          {demo ? "Demo folder — pick a real one" : "Choose a folder…"}
+        </button>
+      ) : (
+        <>
+          {parts.length > 2 ? <span className="crumb-sep">…</span> : null}
+          {shown.map((part, index) => (
+            <span key={`${part}-${index}`} className="row" style={{ gap: 2, minWidth: 0 }}>
+              {index > 0 ? <span className="crumb-sep">›</span> : null}
+              <button className={`crumb ${index === shown.length - 1 ? "last" : ""}`} onClick={onPick} title={root}>
+                {part}
+              </button>
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
 
 export function TopBar({
   tab,
@@ -32,6 +60,7 @@ export function TopBar({
   setTheme,
   lastUndo,
   onUndo,
+  onPalette,
 }: {
   tab: TabId;
   setTab: (tab: TabId) => void;
@@ -45,6 +74,7 @@ export function TopBar({
   setTheme: (theme: string) => void;
   lastUndo: UndoRecord | null;
   onUndo: () => void;
+  onPalette: () => void;
 }) {
   const [themeOpen, setThemeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -62,18 +92,20 @@ export function TopBar({
     <header className="topbar">
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
-          ⇄
+          <Icon name="sort" size={15} strokeWidth={2.1} />
         </div>
         <div className="brand-name">ArrangeIt</div>
       </div>
 
-      <button className="path-btn" onClick={onPick} title="Choose a folder to scan">
-        <span aria-hidden="true">🗀</span>
-        <span className="label">{root || (demo ? "Demo folder — pick a real one" : "Choose a folder…")}</span>
+      <Crumbs root={root} demo={demo} onPick={onPick} />
+
+      <button className="iconbtn bordered" onClick={onScan} disabled={busy} title="Rescan (F5)">
+        {busy ? <Spinner /> : <Icon name="refresh" size={14} />}
       </button>
 
-      <button className="iconbtn bordered" onClick={onScan} disabled={busy || !root} title="Rescan this folder">
-        {busy ? <Spinner /> : "⟳"}
+      <button className="iconbtn bordered wide" onClick={onPalette} title="Command palette (Ctrl+K)">
+        <Icon name="command" size={13} />
+        <Kbd>K</Kbd>
       </button>
 
       <span className="spacer" />
@@ -86,8 +118,9 @@ export function TopBar({
             className="tab"
             aria-selected={tab === item.id}
             onClick={() => setTab(item.id)}
+            title={`${item.label} (${TABS.findIndex((t) => t.id === item.id) + 1})`}
           >
-            <span aria-hidden="true">{item.glyph}</span>
+            <Icon name={item.icon} size={14} />
             {item.label}
             {counts[item.id] ? <span className="pill">{counts[item.id]}</span> : null}
           </button>
@@ -97,7 +130,7 @@ export function TopBar({
       <span className="spacer" />
 
       <button className="iconbtn" onClick={onUndo} disabled={!lastUndo} title={lastUndo?.label ?? "Nothing to undo"}>
-        ↺
+        <Icon name="undo" size={15} />
       </button>
 
       <div style={{ position: "relative" }} ref={menuRef}>
@@ -107,7 +140,7 @@ export function TopBar({
           aria-expanded={themeOpen}
           title="Appearance"
         >
-          ◐
+          <Icon name="palette" size={14} />
         </button>
         {themeOpen ? (
           <div
@@ -121,11 +154,11 @@ export function TopBar({
               flexDirection: "column",
               gap: 3,
               padding: 5,
-              minWidth: 132,
-              borderRadius: 10,
+              minWidth: 138,
+              borderRadius: 11,
               background: "var(--surface-2)",
               border: "1px solid var(--border)",
-              boxShadow: "var(--shadow)",
+              boxShadow: "var(--shadow-lg)",
             }}
           >
             {THEMES.map((item) => (
@@ -137,9 +170,30 @@ export function TopBar({
                   setTheme(item.id);
                   setThemeOpen(false);
                 }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 8px",
+                  borderRadius: 8,
+                  border: "1px solid transparent",
+                  background: theme === item.id ? "var(--accent-soft)" : "transparent",
+                  color: theme === item.id ? "var(--text)" : "var(--text-2)",
+                  fontSize: 12,
+                  textAlign: "left",
+                }}
               >
-                <span className="chip" style={{ background: item.chip }} />
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    borderRadius: 4,
+                    background: item.chip,
+                    boxShadow: "inset 0 0 0 1px rgb(0 0 0 / .25)",
+                  }}
+                />
                 {item.label}
+                {theme === item.id ? <Icon name="check" size={12} style={{ marginLeft: "auto" }} /> : null}
               </button>
             ))}
           </div>

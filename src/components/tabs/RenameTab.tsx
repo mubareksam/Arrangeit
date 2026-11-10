@@ -1,6 +1,7 @@
 import { RENAME_TOKENS, buildPatternName } from "../../lib/organizer/engine";
 import type { RenameOptions, RenameRow } from "../../lib/organizer/types";
-import { Badge, Empty, Segmented } from "../ui";
+import { Icon } from "../Icon";
+import { Badge, Empty, Segmented, Spinner } from "../ui";
 
 export function RenameTab({
   options,
@@ -25,8 +26,11 @@ export function RenameTab({
   return (
     <div className="panel">
       <div className="panel-head">
-        <span className="panel-title">Batch rename</span>
-        <span className="panel-sub">· {rows.length} selected</span>
+        <span className="panel-title">
+          <Icon name="pencil" size={14} />
+          Batch rename
+        </span>
+        <span className="panel-sub">· {rows.length} selected · names only, contents untouched</span>
         <span className="spacer" />
         {blocked.length > 0 ? <Badge tone="warn">{blocked.length} blocked</Badge> : <Badge tone="ok">{changed.length} ready</Badge>}
       </div>
@@ -138,7 +142,9 @@ export function RenameTab({
               title={row.conflict ? "Name already taken in this folder" : row.error}
             >
               <span className="ren-old">{row.file.name}</span>
-              <span className="arrow">→</span>
+              <span className="arrow">
+                <Icon name="arrowRight" size={11} />
+              </span>
               <span className="ren-new">
                 {row.nextName}
                 {row.conflict ? "  (taken)" : ""}
@@ -151,13 +157,14 @@ export function RenameTab({
 
       <div className="footbar">
         <button className="btn sm ghost" onClick={onExport} disabled={rows.length === 0}>
-          Export CSV
+          <Icon name="download" size={12} /> CSV
         </button>
         <span className="hint tnum">
           {changed.length} of {rows.length} will change
         </span>
         <span className="spacer" />
         <button className="btn primary" disabled={busy || changed.length === 0} onClick={onApply}>
+          {busy ? <Spinner /> : <Icon name="check" size={13} />}
           {busy ? "Renaming…" : `Rename ${changed.length}`}
         </button>
       </div>

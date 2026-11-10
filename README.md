@@ -4,29 +4,48 @@
 
 Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript** for the UI. Nothing leaves your machine.
 
-> ### ⬇ [Download ArrangeIt 1.1.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.1.0/ArrangeIt_1.1.0_x64-setup.exe)
-> Run `ArrangeIt_1.1.0_x64-setup.exe` — no Rust, Node or other tooling required.
-> Already on 1.0.0? Just run it: the installer upgrades in place (same app id + install
+> ### ⬇ [Download ArrangeIt 1.2.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.2.0/ArrangeIt_1.2.0_x64-setup.exe)
+> Run `ArrangeIt_1.2.0_x64-setup.exe` — no Rust, Node or other tooling required.
+> Already on 1.0.0/1.1.0? Just run it: the installer upgrades in place (same app id + install
 > folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
 
 ```
- ┌───────────────┬──────────────────────────────────┬────────────────┐
- │  Files        │  Arrange · Duplicates · Rename   │  Preview       │
- │  (3 cols)     │  Folder styles · Activity        │  (3 cols)      │
- └───────────────┴──────────────────────────────────┴────────────────┘
+ ┌───────────────┬────────────────────────────────────────────┬────────────────┐
+ │  Files        │  Arrange · Duplicates · Rename · Styles    │  Preview       │
+ │  virtualised  │  Insights · History                        │  on demand     │
+ └───────────────┴────────────────────────────────────────────┴────────────────┘
+    Ctrl+K opens the command palette from anywhere.
 ```
+
+## What's new in 1.2.0
+
+- **Folder Intelligence** — the *Insights* tab turns the folder into a to-do list: duplicate
+  groups, screenshot piles, oversized media, stale downloads, installers, junk drawers,
+  near-identical names and folders with no look yet. Each card turns into an arrange plan you
+  review before a single file moves.
+- **Visually similar detection** — a perceptual dHash (9×8 luma, Hamming distance) catches the
+  same photo re-saved, resized or renamed, which byte hashing alone never will.
+- **Any folder can be styled** — 25 hand-drawn icon glyphs, 16 presets and 20 colours, and the
+  folder does not have to live inside the scanned directory: pick it from the folder picker.
+  *Auto-style* gives every plain folder a look based on what is actually inside it.
+- **Command palette** — `Ctrl+K`, then type: tabs, themes, folder actions, arrange, dedupe, undo.
+- **Faster everywhere** — scanning is metadata-only (no file is opened), the file list is
+  virtualised (smooth at 20 000+ files), and hashing/pixel reading only runs on demand. Every
+  Rust loop is rayon-parallel.
 
 ## Features
 
 | Feature | What it does |
 | --- | --- |
 | **Auto-arrange** | Buckets files by **date** (year/month/day), **type**, **size** range, **name** (A–F…), **extension**, or **similarity** (fuzzy name clustering). Move or copy, with dry-run by default and an undo record per run. |
-| **Duplicate finder** | SHA-256 byte-identical groups, plus near-duplicates: audio matched on duration, images on pixel dimensions, and fuzzy name matching everywhere. Suggests the copy to keep (highest resolution → largest → oldest) and recycles the rest. |
+| **Duplicate finder** | SHA-256 byte-identical groups, plus near-duplicates: audio matched on duration, images on pixel dimensions, **perceptual dHash for visually similar pictures**, and fuzzy name matching everywhere. Suggests the copy to keep (highest resolution → largest → oldest) and recycles the rest. |
 | **Batch rename** | Token patterns (`{name} {ext} {counter} {date} {kind} {size} {folder}`), find/replace, case modes, sequence padding, live conflict detection, two-phase commit so `a ↔ b` swaps are safe. |
-| **Folder styles** | Custom folder icon + tooltip: generates a real 16/32/48/256 px `.ico`, writes a quoted `IconResource` `desktop.ini`, applies `attrib +r/+s/+h`, flushes the shell cache with `ie4uinit -show`. Re-applying clears old attributes first, and **Remove style** restores the default look. |
+| **Folder styles** | 25 glyphs × 20 colours × 16 presets, for **any** directory (not just subfolders of the scan root). Generates a real 16/32/48/256 px `.ico`, writes a quoted `IconResource` `desktop.ini`, applies `attrib +r/+s/+h`, flushes the shell cache with `ie4uinit -show`. Re-applying clears old attributes first, and **Remove style** restores the default look. *Auto-style* picks a look from the dominant file type. |
+| **Folder intelligence** | `buildInsights()` — duplicates, screenshots, large files, stale downloads, installers, junk drawers, similar names, unstyled folders. |
 | **Preview** | Real previews via Tauri's asset protocol: image thumbnails, inline video playback, audio playback with a waveform decoded from the actual file, plus text previews, metadata and the planned destination. |
 | **Themes** | Dusk, Midnight, Amber and Paper, persisted per machine. |
+| **Command palette** | `Ctrl+K` — every action, tab, theme and folder in one fuzzy search. |
 | **Undo & export** | Every run records a reversible op; undo moves files back on disk. Arrange and rename plans export to CSV. |
 
 ## Quick start (from source)
@@ -42,7 +61,7 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 
 ```bash
 cargo tauri dev
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.0.0_x64-setup.exe
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.2.0_x64-setup.exe
 ```
 
 ## How it works
@@ -67,12 +86,15 @@ Rust commands exposed to the frontend:
 
 | Command | Purpose |
 | --- | --- |
-| `scan_folder(path, recursive)` | walkdir + rayon scan; metadata, dimensions, durations, SHA-256 (≤256 MB), text previews |
+| `scan_folder(path, recursive, hash)` | walkdir + rayon, metadata only by default (paths, size, mtime) — nothing is opened |
+| `inspect_file(path)` | dimensions / duration / bitrate / text preview for the one file in the preview pane |
+| `compute_hashes(paths)` | SHA-256 on demand, 128 KB buffers, 512 MB cap |
+| `image_signatures(paths)` | 9×8 perceptual dHash for the visually-similar pass |
 | `execute_arrange(items, action, dryRun, root)` | move/copy per plan, `name (2).ext` collision handling, returns undo record |
 | `delete_duplicates(paths, toRecycleBin)` | Recycle Bin deletes, bytes reclaimed |
 | `rename_files(pairs, dryRun)` | two-phase temp-then-final rename |
 | `apply_folder_style(style, root, dryRun)` | generates `.ico`, writes `desktop.ini`, sets attributes, refreshes cache |
-| `reset_folder_style(root, folder)` | removes `desktop.ini`, clears the read-only flag, flushes cache |
+| `reset_folder_style(root, folder, path?)` | removes `desktop.ini`, clears the read-only flag, flushes cache |
 | `list_folders(path)` | immediate sub-folders, including empty ones |
 | `revert_files(ops)` | moves recorded paths back (undo) |
 | `refresh_shell()` | `ie4uinit -show` |
@@ -83,9 +105,13 @@ Rust commands exposed to the frontend:
 
 | Key | Action |
 | --- | --- |
-| `1`–`5` | Switch workspace tab |
+| `Ctrl/⌘ + K` | Command palette |
+| `1`–`6` | Arrange · Duplicates · Rename · Styles · Insights · History |
+| `Ctrl/⌘ + O` | Choose a folder |
+| `F5` | Rescan the current folder |
 | `Ctrl/⌘ + Z` | Undo the last recorded action |
-| `Enter` | Run the arrange plan |
+| `Enter` | Run the arrange plan (Arrange tab) |
+| `/` | Focus the file search |
 | `Ctrl/⌘ + click` | Multi-select files |
 
 ## Notes on previews and styles
@@ -97,7 +123,7 @@ Rust commands exposed to the frontend:
 
 ## Status
 
-The frontend is complete and builds with `npm run build`. The native layer implements all six commands; compiling requires a Rust toolchain, which is why CI-friendly `npm` builds never touch `src-tauri`.
+The frontend is complete and builds with `npm run build`. The native layer implements all fourteen commands; compiling requires a Rust toolchain, which is why CI-friendly `npm` builds never touch `src-tauri`. Installers are produced by GitHub Actions on `windows-latest` and published to Releases.
 
 See [`CREATION_GUIDE.md`](./CREATION_GUIDE.md) to rebuild this project from scratch, and [`CREATE_REPO.md`](./CREATE_REPO.md) to publish it.
 
