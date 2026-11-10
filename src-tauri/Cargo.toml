@@ -1,6 +1,6 @@
 [package]
 name = "arrangeit"
-version = "1.4.0"
+version = "1.4.1"
 description = "ArrangeIt — local-first file organizer"
 authors = ["mubareksam"]
 edition = "2021"

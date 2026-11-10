@@ -1184,7 +1184,7 @@ export default function App() {
             <Icon name="zap" size={11} /> Fast mode
           </button>
         ) : null}
-        <span>v1.4.0</span>
+        <span>v1.4.1</span>
       </footer>
 
       {toast ? (

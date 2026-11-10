@@ -6,8 +6,8 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
 
 <img src="./docs/icon.png" width="88" align="right" alt="" />
 
-> ### ⬇ [Download ArrangeIt 1.4.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.4.0/ArrangeIt_1.4.0_x64-setup.exe)
-> Run `ArrangeIt_1.4.0_x64-setup.exe` — no Rust, Node or other tooling required.
+> ### ⬇ [Download ArrangeIt 1.4.1 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.4.1/ArrangeIt_1.4.1_x64-setup.exe)
+> Run `ArrangeIt_1.4.1_x64-setup.exe` — no Rust, Node or other tooling required.
 > Already on an older version? Just run it: the installer upgrades in place (same app id +
 > install folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
@@ -20,6 +20,20 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
     Ctrl+K opens the command palette from anywhere.
 ```
 
+## What's new in 1.4.1 — a real identity
+
+The first icon was a folder with an arrow: accurate, and completely forgettable — the same
+silhouette as every other file utility. It is replaced by a **single geometric `A` monogram**:
+warm white on a frosted violet tile, one light sweep, a diagonal sheen, nothing else.
+
+- One letter survives 16 px better than any pictogram, so the taskbar, Start menu, installer
+  and window title all carry the same recognisable mark.
+- Generated, never hand-edited: `scripts/make-icon.mjs` renders the vector master into a
+  hand-built `.ico` — 32-bit **DIB at 16/24/32/48/64/128** and **PNG only at 256** (Windows
+  ignores PNG entries below 256) — plus every Store logo size, with a heavier stroke variant for
+  the smallest sizes. `npm run icons` rebuilds everything in about six seconds.
+- The in-app header (`BrandMark.tsx`) draws the same geometry as live SVG.
+
 ## What's new in 1.4.0
 
 - **The stuck "working" spinner is gone.** `busy` was a single shared boolean written by eight
@@ -27,10 +41,9 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
   every job registers `{label, startedAt, cancellable}`, the status bar lists what is actually
   running with elapsed seconds, long jobs can be cancelled, and a **run token** means a stale
   scan can never apply its results over a newer one. Scans default to *this folder only*.
-- **New app icon** — frosted gradient tile, folder silhouette, arrow punched through in the
-  tile's own gradient. Vector master (`scripts/make-icon.mjs`) → exact multi-size `.ico`
-  (DIB 16/24/32/48/64/128 + PNG 256, because Windows ignores PNG entries below 256), plus every
-  Windows Store logo size. `npm run icons` regenerates them.
+- **New app icon** — a geometric `A` monogram on a frosted tile (see 1.4.1 above for the final
+  design). Vector master (`scripts/make-icon.mjs`) → exact multi-size `.ico`
+  (DIB 16/24/32/48/64/128 + PNG 256), plus every Windows Store logo size.
 - **Advanced duplicate finder** — stat strip (groups · extra copies · reclaimable · biggest),
   size / cross-folder / media filters, keeper strategies (best quality, newest, oldest, largest,
   shortest path), thumbnail compare strip with the keeper ringed green, per-group confidence,
@@ -100,7 +113,7 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 ```bash
 cargo tauri dev
 npm run icons        # regenerate every icon from the vector master
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.4.0_x64-setup.exe
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.4.1_x64-setup.exe
 ```
 
 ## How it works
@@ -165,7 +178,7 @@ Rust commands exposed to the frontend:
 - If the UI feels heavy on a low-power GPU, turn on **Fast mode** (appearance menu). It removes the
   aurora animation and shrinks the blur radius; the layout is unchanged.
 - Icons are generated, never hand-edited: `npm run icons` rewrites `src-tauri/icons/*` from the SVG
-  in `scripts/make-icon.mjs`.
+  in `scripts/make-icon.mjs` (≈6 s; the master is rasterised once and reused for every size).
 
 ## Status
 
