@@ -60,7 +60,15 @@ export function InsightsTab({
 
       <div className="panel-body">
         {insights.length === 0 ? (
-          <Empty icon="check" title="This folder is already tidy" hint="No duplicates, no stale downloads, no junk drawer. Nice." />
+          stats.files === 0 ? (
+            <Empty
+              icon="scan"
+              title="Nothing scanned yet"
+              hint="Pick a folder in the header — insights appear the moment the scan finishes."
+            />
+          ) : (
+            <Empty icon="check" title="This folder is already tidy" hint="No duplicates, no stale downloads, no junk drawer. Nice." />
+          )
         ) : (
           <div className="insights">
             {insights.map((insight) => (
