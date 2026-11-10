@@ -12,6 +12,7 @@ import { RenameTab } from "./components/tabs/RenameTab";
 import { Icon } from "./components/Icon";
 import { Spinner } from "./components/ui";
 import {
+  DEFAULT_DUPLICATE_FILTER,
   DEFAULT_DUPLICATE_OPTIONS,
   DEFAULT_RENAME_OPTIONS,
   FOLDER_COLORS,
@@ -19,14 +20,17 @@ import {
   arrangePreview,
   buildInsights,
   dominantKind,
+  filterDuplicateGroups,
   findDuplicates,
   formatDate,
   humanBytes,
-  keeperSuggestion,
+  pickKeeper,
   presetForKind,
   summarizeArrange,
   uid,
   visualDuplicateGroups,
+  type DuplicateFilter,
+  type KeeperStrategy,
 } from "./lib/organizer/engine";
 import { DEMO_FOLDER_STYLES, DEMO_LOG, DEMO_ROOT, MOCK_FILES, MOCK_FOLDERS } from "./lib/organizer/mockData";
 import {
@@ -45,6 +49,7 @@ import {
   saveTextFile,
   scanFolder,
   type FolderEntry,
+  type Signature,
 } from "./lib/organizer/bridge";
 import type {
   AppFile,
@@ -80,6 +85,9 @@ const PRESETS: ArrangePreset[] = [
 
 const baseName = (path: string) => path.split(/[\\/]+/).filter(Boolean).pop() ?? path;
 
+/** Images are hashed in batches so the UI can breathe (and be cancelled). */
+const HASH_BATCH = 24;
+
 function loadCustomFolders(): FolderEntry[] {
   try {
     const raw = localStorage.getItem("arrangeit.customFolders");
@@ -89,18 +97,30 @@ function loadCustomFolders(): FolderEntry[] {
   }
 }
 
+function loadPreference<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 type Toast = { id: string; message: string; kind: "ok" | "error" };
+type EffectLevel = "auto" | "high" | "low";
+
+/** A single unit of work shown in the status bar. Cancelling only discards results. */
+interface Task {
+  id: string;
+  label: string;
+  startedAt: number;
+  cancellable: boolean;
+}
 
 export default function App() {
   const tauri = useMemo(() => isTauri(), []);
 
-  const [theme, setTheme] = useState<string>(() => {
-    try {
-      return localStorage.getItem("arrangeit.theme") ?? "dusk";
-    } catch {
-      return "dusk";
-    }
-  });
+  const [theme, setTheme] = useState<string>(() => loadPreference("arrangeit.theme", "dusk"));
+  const [effects, setEffects] = useState<EffectLevel>(() => loadPreference<EffectLevel>("arrangeit.effects", "auto"));
   const [tab, setTab] = useState<TabId>("arrange");
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -127,19 +147,46 @@ export default function App() {
     tauri ? new Set() : new Set(MOCK_FILES.slice(0, 6).map((f) => f.id)),
   );
   const [activeId, setActiveId] = useState<string | null>(tauri ? null : (MOCK_FILES[0]?.id ?? null));
-  const [recursive, setRecursive] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [hashing, setHashing] = useState(false);
+  const [recursive, setRecursive] = useState(false);
+
+  /* ---- task registry (replaces the old shared `busy` boolean) ---- */
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [clock, setClock] = useState(() => Date.now());
+  const cancelled = useRef(new Set<string>());
+  const busy = tasks.length > 0;
+
+  const beginTask = useCallback((label: string, cancellable = false) => {
+    const id = uid("task");
+    setTasks((prev) => [...prev, { id, label, startedAt: Date.now(), cancellable }]);
+    return id;
+  }, []);
+
+  const endTask = useCallback((id: string) => {
+    cancelled.current.delete(id);
+    setTasks((prev) => prev.filter((task) => task.id !== id));
+  }, []);
+
+  const cancelTask = useCallback((id: string) => {
+    cancelled.current.add(id);
+    setTasks((prev) => prev.filter((task) => task.id !== id));
+  }, []);
+
+  const isCancelled = useCallback((id: string) => cancelled.current.has(id), []);
 
   const [rule, setRule] = useState<ArrangeRule>(INITIAL_RULE);
   const [scope, setScope] = useState<"selected" | "all">("all");
 
   const [dupOptions, setDupOptions] = useState(DEFAULT_DUPLICATE_OPTIONS);
+  const [dupFilter, setDupFilter] = useState<DuplicateFilter>(DEFAULT_DUPLICATE_FILTER);
+  const [keeperStrategy, setKeeperStrategy] = useState<KeeperStrategy>("best");
   const [scanned, setScanned] = useState(!tauri);
   const [scannedAt, setScannedAt] = useState<string | null>(null);
   const [visualGroups, setVisualGroups] = useState<DuplicateGroup[]>([]);
   const [keepers, setKeepers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [ignoredGroups, setIgnoredGroups] = useState<Set<string>>(new Set());
+  const [hashProgress, setHashProgress] = useState<{ done: number; total: number } | null>(null);
+  const hashing = hashProgress !== null;
 
   const [renameOptions, setRenameOptions] = useState<RenameOptions>(DEFAULT_RENAME_OPTIONS);
   const [activeFolder, setActiveFolder] = useState<string>(() =>
@@ -155,8 +202,9 @@ export default function App() {
 
   const toastTimer = useRef<number | null>(null);
   const rollbacks = useRef(new Map<string, () => void>());
+  const scanSeq = useRef(0);
 
-  /* ---------------- feedback ---------------- */
+  /* ---------------- chrome ---------------- */
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -166,6 +214,25 @@ export default function App() {
       /* private mode */
     }
   }, [theme]);
+
+  useEffect(() => {
+    const cores = navigator.hardwareConcurrency ?? 4;
+    const level = effects === "auto" ? (cores <= 4 ? "low" : "high") : effects;
+    document.documentElement.dataset.perf = level;
+    try {
+      localStorage.setItem("arrangeit.effects", effects);
+    } catch {
+      /* ignore */
+    }
+  }, [effects]);
+
+  // One timer for every running task, not one per task.
+  useEffect(() => {
+    if (tasks.length === 0) return;
+    setClock(Date.now());
+    const id = window.setInterval(() => setClock(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, [tasks.length]);
 
   useEffect(() => {
     try {
@@ -193,9 +260,14 @@ export default function App() {
 
   const scanInto = useCallback(
     async (path: string, silent = false) => {
-      setBusy(true);
+      const run = scanSeq.current + 1;
+      scanSeq.current = run;
+      const task = beginTask("Scanning folder", true);
       try {
         const result = await scanFolder(path, recursive, false);
+        // A newer scan (or a cancel) wins: stale results are dropped, never applied.
+        if (isCancelled(task) || run !== scanSeq.current) return;
+
         setFiles(result.files);
         setRoot(result.root);
         setSelection(new Set());
@@ -205,9 +277,11 @@ export default function App() {
         setScanned(false);
         setScannedAt(null);
         setVisualGroups([]);
+        setIgnoredGroups(new Set());
         setSteps(null);
 
         const listed = await listFolders(result.root);
+        if (isCancelled(task) || run !== scanSeq.current) return;
         setFolders(listed);
         setActiveFolder((current) => (listed.some((f) => f.path === current) ? current : (listed[0]?.path ?? "")));
 
@@ -228,13 +302,13 @@ export default function App() {
         pushLog("error", "Scan failed", String(error));
         showToast("Could not read that folder", "error");
       } finally {
-        setBusy(false);
+        endTask(task);
       }
     },
-    [pushLog, recursive, showToast],
+    [beginTask, endTask, isCancelled, pushLog, recursive, showToast],
   );
 
-  // Resume the last folder on launch (desktop only) — the user never sees phantom files.
+  // Resume the last folder on launch (desktop only) — flat by default, so it is instant.
   useEffect(() => {
     if (!tauri) return;
     let last = "";
@@ -304,18 +378,26 @@ export default function App() {
     return [...baseGroups, ...extras];
   }, [baseGroups, dupOptions.byVisual, files, visualGroups]);
 
+  const visibleGroups = useMemo(
+    () => filterDuplicateGroups(duplicateGroups, dupFilter).filter((group) => !ignoredGroups.has(group.id)),
+    [duplicateGroups, dupFilter, ignoredGroups],
+  );
+
   const renameRows = useMemo(() => applyRename(selectedFiles, renameOptions), [selectedFiles, renameOptions]);
 
   const activeFile = useMemo(() => files.find((f) => f.id === activeId) ?? null, [files, activeId]);
   const activeTarget = useMemo(() => items.find((i) => i.file.id === activeId)?.targetFolder, [items, activeId]);
   const totalBytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
-  const styledFolderNames = useMemo(
-    () => new Set([...appliedStyles].map((path) => baseName(path))),
-    [appliedStyles],
-  );
+  const styledFolderNames = useMemo(() => new Set([...appliedStyles].map((path) => baseName(path))), [appliedStyles]);
 
   const insights: Insight[] = useMemo(
-    () => buildInsights(files, allFolders.map((f) => ({ name: f.name, files: f.files, bytes: f.bytes })), duplicateGroups, styledFolderNames),
+    () =>
+      buildInsights(
+        files,
+        allFolders.map((f) => ({ name: f.name, files: f.files, bytes: f.bytes })),
+        duplicateGroups,
+        styledFolderNames,
+      ),
     [allFolders, duplicateGroups, files, styledFolderNames],
   );
 
@@ -360,7 +442,7 @@ export default function App() {
 
   const handleArrange = useCallback(async () => {
     if (items.length === 0) return;
-    setBusy(true);
+    const task = beginTask(rule.dryRun ? "Running dry run" : "Moving files");
     try {
       const snapshot = files;
       const outcome = await executeArrange(items, rule.action, rule.dryRun, root);
@@ -392,9 +474,9 @@ export default function App() {
       pushLog("error", "Arrange failed", String(error));
       showToast("Arrange failed — see History", "error");
     } finally {
-      setBusy(false);
+      endTask(task);
     }
-  }, [files, items, pushLog, pushUndo, root, rule.action, rule.dryRun, rule.mode, showToast, summary.length]);
+  }, [beginTask, endTask, files, items, pushLog, pushUndo, root, rule.action, rule.dryRun, rule.mode, showToast, summary.length]);
 
   const togglePending = useCallback((fileId: string) => {
     setPending((prev) => {
@@ -412,6 +494,7 @@ export default function App() {
     }
     setScanned(true);
     setScannedAt(formatDate(new Date().toISOString(), true).split(" ").slice(-1)[0]);
+    setIgnoredGroups(new Set());
     const groups = findDuplicates(files, dupOptions);
     pushLog(
       "duplicate",
@@ -420,41 +503,75 @@ export default function App() {
     );
     showToast(`${groups.length} duplicate group${groups.length === 1 ? "" : "s"} found`);
 
-    // Perceptual pass runs in the background: reads image pixels, nothing else.
-    if (dupOptions.byVisual && tauri) {
-      const images = files.filter((file) => file.kind === "image");
-      if (images.length > 0) {
-        setHashing(true);
-        try {
-          const signatures = await imageSignatures(images.map((file) => file.path));
-          const exact = new Set(groups.flatMap((group) => group.files.map((file) => file.path)));
-          const visual = visualDuplicateGroups(signatures, files, 10, exact);
-          setVisualGroups(visual);
-          if (visual.length > 0) {
-            pushLog("duplicate", `${visual.length} visually similar clusters`, "perceptual dHash");
-            showToast(`+${visual.length} visually similar group${visual.length === 1 ? "" : "s"}`);
-          }
-        } catch (error) {
-          pushLog("error", "Similarity pass failed", String(error));
-        } finally {
-          setHashing(false);
+    const images = files.filter((file) => file.kind === "image");
+    if (!dupOptions.byVisual || !tauri || images.length === 0) {
+      setVisualGroups([]);
+      return;
+    }
+
+    // Pixel pass: batched, cancellable, with real progress.
+    const task = beginTask(`Comparing ${images.length} images`, true);
+    setHashProgress({ done: 0, total: images.length });
+    const collected: Signature[] = [];
+    try {
+      for (let index = 0; index < images.length; index += HASH_BATCH) {
+        if (isCancelled(task)) break;
+        setHashProgress({ done: index, total: images.length });
+        const chunk = images.slice(index, index + HASH_BATCH);
+        // Sequential batches keep memory flat and let the UI repaint between them.
+        const signatures = await imageSignatures(chunk.map((file) => file.path));
+        collected.push(...signatures);
+      }
+      if (!isCancelled(task)) {
+        const exact = new Set(groups.flatMap((group) => group.files.map((file) => file.path)));
+        const visual = visualDuplicateGroups(collected, files, 10, exact);
+        setVisualGroups(visual);
+        if (visual.length > 0) {
+          pushLog("duplicate", `${visual.length} visually similar clusters`, "perceptual dHash");
+          showToast(`+${visual.length} visually similar group${visual.length === 1 ? "" : "s"}`);
+        }
+        if (collected.length < images.length) {
+          pushLog("duplicate", `${images.length - collected.length} images skipped`, "too large to compare visually");
         }
       }
+    } catch (error) {
+      pushLog("error", "Similarity pass failed", String(error));
+    } finally {
+      setHashProgress(null);
+      endTask(task);
     }
-  }, [dupOptions, files, pushLog, root, showToast, tauri]);
+  }, [beginTask, dupOptions, endTask, files, isCancelled, pushLog, root, showToast, tauri]);
 
   const selectAllExtras = useCallback(() => {
-    const extras = duplicateGroups.flatMap((group) => {
-      const keepId = keepers[group.id] ?? keeperSuggestion(group).id;
-      return group.files.filter((f) => f.id !== keepId).map((f) => f.id);
+    const extras = visibleGroups.flatMap((group) => {
+      const keepId = keepers[group.id] ?? pickKeeper(group, keeperStrategy).id;
+      return group.files.filter((file) => file.id !== keepId).map((file) => file.id);
     });
     setPending(new Set(extras));
-  }, [duplicateGroups, keepers]);
+  }, [keeperStrategy, keepers, visibleGroups]);
+
+  const keepOnePerFolder = useCallback(() => {
+    const nextKeepers: Record<string, string> = { ...keepers };
+    const nextPending = new Set(pending);
+    for (const group of visibleGroups) {
+      const sorted = [...group.files].sort((a, b) => a.folder.localeCompare(b.folder) || a.path.length - b.path.length);
+      const keeper = sorted[0];
+      if (!keeper) continue;
+      nextKeepers[group.id] = keeper.id;
+      for (const file of group.files) {
+        if (file.id !== keeper.id) nextPending.add(file.id);
+        else nextPending.delete(file.id);
+      }
+    }
+    setKeepers(nextKeepers);
+    setPending(nextPending);
+    showToast("Keeping one copy per folder — review, then recycle");
+  }, [keepers, pending, showToast, visibleGroups]);
 
   const handleDeleteDuplicates = useCallback(async () => {
     const targets = files.filter((f) => pending.has(f.id));
     if (targets.length === 0) return;
-    setBusy(true);
+    const task = beginTask(`Recycling ${targets.length} files`);
     try {
       const snapshot = files;
       const bytes = targets.reduce((sum, f) => sum + f.size, 0);
@@ -474,14 +591,14 @@ export default function App() {
       pushLog("error", "Delete failed", String(error));
       showToast("Could not recycle those files", "error");
     } finally {
-      setBusy(false);
+      endTask(task);
     }
-  }, [files, pending, pushLog, pushUndo, showToast]);
+  }, [beginTask, endTask, files, pending, pushLog, pushUndo, showToast]);
 
   const handleRename = useCallback(async () => {
     const ready = renameRows.filter((r) => r.changed && !r.conflict && !r.error);
     if (ready.length === 0) return;
-    setBusy(true);
+    const task = beginTask(`Renaming ${ready.length} files`);
     try {
       const snapshot = files;
       const outcome = await commitRename(renameRows, false);
@@ -501,9 +618,9 @@ export default function App() {
       pushLog("error", "Rename failed", String(error));
       showToast("Rename failed — a target name may exist", "error");
     } finally {
-      setBusy(false);
+      endTask(task);
     }
-  }, [files, pushLog, pushUndo, renameOptions, renameRows, showToast]);
+  }, [beginTask, endTask, files, pushLog, pushUndo, renameOptions, renameRows, showToast]);
 
   const updateStyle = useCallback((folderPath: string, patch: Partial<FolderStyle>) => {
     setStyles((prev) => {
@@ -538,7 +655,7 @@ export default function App() {
       showToast("Choose a folder first", "error");
       return;
     }
-    setBusy(true);
+    const task = beginTask(`Styling ${baseName(activeFolder)}`);
     try {
       const outcome = await applyStyleTo(activeFolder, style);
       setSteps(outcome.steps);
@@ -553,9 +670,9 @@ export default function App() {
       pushLog("error", "Folder style failed", String(error));
       showToast(String(error), "error");
     } finally {
-      setBusy(false);
+      endTask(task);
     }
-  }, [activeFolder, applyStyleTo, pushLog, root, showToast, styles]);
+  }, [activeFolder, applyStyleTo, beginTask, endTask, pushLog, root, showToast, styles]);
 
   const applyPresetToStyle = useCallback(
     (preset: StylePreset, folderPath = activeFolder) => {
@@ -586,37 +703,43 @@ export default function App() {
       showToast("Every folder already has a look");
       return;
     }
+    const task = beginTask(`Auto-styling ${Math.min(targets.length, 24)} folders`, true);
     setAutoBusy(true);
     let done = 0;
     let failed = 0;
-    for (const folder of targets.slice(0, 24)) {
-      const inside = files.filter((file) => file.path.toLowerCase().startsWith(folder.path.toLowerCase() + "\\"));
-      const preset = presetForKind(dominantKind(inside));
-      const style: FolderStyle = {
-        folder: folder.name,
-        path: folder.path,
-        glyph: preset.glyph,
-        color: preset.color,
-        tooltip: preset.tooltip,
-        hideSystemFiles: true,
-      };
-      try {
-        await applyStyleTo(folder.path, style);
-        setStyles((prev) => ({ ...prev, [folder.path]: style }));
-        setAppliedStyles((prev) => new Set(prev).add(folder.path));
-        done += 1;
-      } catch {
-        failed += 1;
+    try {
+      for (const folder of targets.slice(0, 24)) {
+        if (isCancelled(task)) break;
+        const inside = files.filter((file) => file.path.toLowerCase().startsWith(folder.path.toLowerCase() + "\\"));
+        const preset = presetForKind(dominantKind(inside));
+        const style: FolderStyle = {
+          folder: folder.name,
+          path: folder.path,
+          glyph: preset.glyph,
+          color: preset.color,
+          tooltip: preset.tooltip,
+          hideSystemFiles: true,
+        };
+        try {
+          await applyStyleTo(folder.path, style);
+          setStyles((prev) => ({ ...prev, [folder.path]: style }));
+          setAppliedStyles((prev) => new Set(prev).add(folder.path));
+          done += 1;
+        } catch {
+          failed += 1;
+        }
       }
+      pushLog("style", `Auto-styled ${done} folders`, failed ? `${failed} failed` : "by dominant file type");
+      showToast(`Auto-styled ${done} folder${done === 1 ? "" : "s"}${failed ? ` · ${failed} failed` : ""}`);
+    } finally {
+      setAutoBusy(false);
+      endTask(task);
     }
-    setAutoBusy(false);
-    pushLog("style", `Auto-styled ${done} folders`, failed ? `${failed} failed` : "by dominant file type");
-    showToast(`Auto-styled ${done} folder${done === 1 ? "" : "s"}${failed ? ` · ${failed} failed` : ""}`);
-  }, [allFolders, appliedStyles, applyStyleTo, files, pushLog, showToast]);
+  }, [allFolders, appliedStyles, applyStyleTo, beginTask, endTask, files, isCancelled, pushLog, showToast]);
 
   const handleResetStyle = useCallback(async () => {
     if (!activeFolder) return;
-    setBusy(true);
+    const task = beginTask(`Restoring ${baseName(activeFolder)}`);
     try {
       const result = await resetFolderStyle(root.replace(/\\+$/, ""), baseName(activeFolder), activeFolder);
       setSteps(result);
@@ -631,9 +754,9 @@ export default function App() {
       pushLog("error", "Reset failed", String(error));
       showToast("Could not remove the style", "error");
     } finally {
-      setBusy(false);
+      endTask(task);
     }
-  }, [activeFolder, pushLog, root, showToast]);
+  }, [activeFolder, beginTask, endTask, pushLog, root, showToast]);
 
   const handleRefreshShell = useCallback(async () => {
     const step = await refreshShell();
@@ -644,7 +767,7 @@ export default function App() {
     async (record?: UndoRecord) => {
       const target = record ?? undoStack[undoStack.length - 1];
       if (!target) return;
-      setBusy(true);
+      const task = beginTask(`Undoing: ${target.label}`);
       try {
         const ops = target.ops ?? [];
         const outcome = ops.length > 0 ? await revertFiles(ops) : { reverted: 0, failures: 0 };
@@ -661,10 +784,10 @@ export default function App() {
         pushLog("error", "Undo failed", String(error));
         showToast("Undo failed", "error");
       } finally {
-        setBusy(false);
+        endTask(task);
       }
     },
-    [pushLog, showToast, undoStack],
+    [beginTask, endTask, pushLog, showToast, undoStack],
   );
 
   const exportPlan = useCallback(async () => {
@@ -684,6 +807,28 @@ export default function App() {
     if (saved) showToast("Rename plan exported");
   }, [renameRows, showToast]);
 
+  const exportDuplicateReport = useCallback(async () => {
+    const rows = [
+      ["group", "match", "confidence", "files", "size_bytes", "reclaimable_bytes", "keeper", "path"],
+      ...visibleGroups.flatMap((group) => {
+        const keeper = keepers[group.id] ?? pickKeeper(group, keeperStrategy).id;
+        return group.files.map((file) => [
+          group.id,
+          group.match,
+          String(group.confidence),
+          String(group.files.length),
+          String(file.size),
+          String(group.reclaimable),
+          file.id === keeper ? "yes" : "no",
+          file.path,
+        ]);
+      }),
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const saved = await saveTextFile(`arrangeit-duplicates-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+    if (saved) showToast("Duplicate report exported");
+  }, [keeperStrategy, keepers, showToast, visibleGroups]);
+
   const handleInsight = useCallback(
     async (insight: Insight) => {
       if (insight.target === "duplicates") {
@@ -702,7 +847,6 @@ export default function App() {
         showToast("Plan ready — review it, then run the dry run");
         return;
       }
-      // styles
       setTab("folders");
       setPlanBusy(insight.id);
       try {
@@ -755,6 +899,7 @@ export default function App() {
       { id: "add-folder", label: "Style any folder…", group: "Folder", icon: "plus", run: () => void addStyleFolder() },
       { id: "auto", label: "Auto-style every folder", group: "Folder", icon: "sparkles", run: () => void handleAutoStyle() },
       { id: "dups", label: "Find duplicates", group: "Actions", icon: "duplicate", run: () => void runDuplicateScan() },
+      { id: "dups-keep", label: "Keep one copy per folder", group: "Actions", icon: "duplicate", run: keepOnePerFolder },
       { id: "dry", label: rule.dryRun ? "Turn off dry run" : "Turn on dry run", group: "Actions", icon: "sliders", run: () => setRule({ ...rule, dryRun: !rule.dryRun }) },
       { id: "apply", label: "Run the arrange plan", group: "Actions", icon: "sort", keys: "Enter", run: () => void handleArrange() },
       { id: "undo", label: "Undo last change", group: "Actions", icon: "undo", keys: "Ctrl+Z", run: () => void handleUndo() },
@@ -765,6 +910,14 @@ export default function App() {
     for (const item of THEMES) {
       list.push({ id: `theme-${item.id}`, label: `Theme: ${item.label}`, group: "Appearance", icon: "palette", run: () => setTheme(item.id) });
     }
+
+    list.push({
+      id: "effects",
+      label: effects === "low" ? "Turn glass effects back on" : "Performance mode (less blur)",
+      group: "Appearance",
+      icon: "zap",
+      run: () => setEffects(effects === "low" ? "high" : "low"),
+    });
 
     for (const folder of allFolders.slice(0, 12)) {
       list.push({
@@ -781,14 +934,14 @@ export default function App() {
     }
 
     return list;
-  }, [addStyleFolder, allFolders, chooseFolder, exportPlan, handleArrange, handleAutoStyle, handleUndo, rule, runDuplicateScan, runScan]);
+  }, [addStyleFolder, allFolders, chooseFolder, effects, exportPlan, handleArrange, handleAutoStyle, handleUndo, keepOnePerFolder, rule, runDuplicateScan, runScan]);
 
   /* ---------------- keyboard ---------------- */
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const el = event.target as HTMLElement | null;
-      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const typing = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -825,7 +978,7 @@ export default function App() {
   }, [chooseFolder, handleArrange, handleUndo, paletteOpen, runScan, tab]);
 
   const counts: Partial<Record<TabId, number>> = {
-    duplicates: duplicateGroups.length,
+    duplicates: visibleGroups.length,
     rename: renameRows.filter((r) => r.changed).length,
     folders: styledFolderNames.size,
     insights: insights.length,
@@ -833,6 +986,8 @@ export default function App() {
 
   const activeFolderEntry = allFolders.find((folder) => folder.path === activeFolder);
   const canStyle = Boolean(root) || allFolders.some((folder) => folder.path.includes("\\"));
+  const runningTask = tasks[tasks.length - 1];
+  const elapsed = runningTask ? Math.max(0, Math.floor((clock - runningTask.startedAt) / 1000)) : 0;
 
   return (
     <div className="app">
@@ -857,6 +1012,8 @@ export default function App() {
         lastUndo={undoStack[undoStack.length - 1] ?? null}
         onUndo={() => void handleUndo()}
         onPalette={() => setPaletteOpen(true)}
+        reduceEffects={effects === "low"}
+        onReduceEffects={(value) => setEffects(value ? "low" : "high")}
       />
 
       <div className="workspace">
@@ -898,20 +1055,40 @@ export default function App() {
 
         {tab === "duplicates" ? (
           <DuplicatesTab
-            groups={duplicateGroups}
+            groups={visibleGroups}
             options={dupOptions}
             setOptions={setDupOptions}
+            filter={dupFilter}
+            setFilter={setDupFilter}
+            strategy={keeperStrategy}
+            setStrategy={(next) => {
+              setKeeperStrategy(next);
+              setKeepers({});
+            }}
             keepers={keepers}
             setKeeper={(groupId, fileId) => setKeepers((prev) => ({ ...prev, [groupId]: fileId }))}
+            ignoredCount={ignoredGroups.size}
+            onIgnore={(groupId) =>
+              setIgnoredGroups((prev) => {
+                const next = new Set(prev);
+                if (next.has(groupId)) next.delete(groupId);
+                else next.add(groupId);
+                return next;
+              })
+            }
+            onClearIgnored={() => setIgnoredGroups(new Set())}
             pending={pending}
             onTogglePending={togglePending}
             onSelectAllButKeepers={selectAllExtras}
+            onKeepOnePerFolder={keepOnePerFolder}
             onDelete={() => void handleDeleteDuplicates()}
             onScan={() => void runDuplicateScan()}
+            onExport={() => void exportDuplicateReport()}
             busy={busy}
             scanned={scanned}
             scannedAt={scannedAt}
             hashing={hashing}
+            hashProgress={hashProgress}
           />
         ) : null}
 
@@ -986,20 +1163,28 @@ export default function App() {
         <span className="sep" />
         <span>{insights.length} suggestions</span>
         <span className="spacer" />
-        {hashing ? (
-          <span className="row" style={{ gap: 6 }}>
-            <Spinner /> hashing pixels
+
+        {tasks.map((task) => (
+          <span className="taskchip" key={task.id}>
+            <Spinner />
+            <span className="ellipsis" style={{ maxWidth: 220 }}>
+              {task.label}
+              {task.id === runningTask?.id && elapsed > 2 ? ` · ${elapsed}s` : ""}
+            </span>
+            {task.cancellable ? (
+              <button className="btn sm ghost" onClick={() => cancelTask(task.id)} title="Stop waiting for this task">
+                Cancel
+              </button>
+            ) : null}
           </span>
+        ))}
+
+        {effects === "low" ? (
+          <button className="btn sm ghost" onClick={() => setEffects("high")} title="Glass effects are off for speed">
+            <Icon name="zap" size={11} /> Fast mode
+          </button>
         ) : null}
-        {busy ? (
-          <span className="row" style={{ gap: 6 }}>
-            <Spinner /> working
-          </span>
-        ) : null}
-        <button className="btn sm ghost" onClick={() => setPaletteOpen(true)}>
-          <Icon name="command" size={11} /> K
-        </button>
-        <span>v1.3.0</span>
+        <span>v1.4.0</span>
       </footer>
 
       {toast ? (
