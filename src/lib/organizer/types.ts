@@ -108,7 +108,7 @@ export const ALL_EXTENSIONS: Record<string, FileKind> = Object.entries(KIND_CONF
 /* Arrange                                                             */
 /* ------------------------------------------------------------------ */
 
-export type ArrangeMode = "date" | "type" | "size" | "similarity" | "name" | "ext";
+export type ArrangeMode = "date" | "type" | "size" | "similarity" | "name" | "ext" | "profession";
 export type DateGranularity = "year" | "month" | "day";
 export type ArrangeAction = "move" | "copy";
 
@@ -136,6 +136,8 @@ export interface ArrangeRule {
   similarityThreshold: number;
   action: ArrangeAction;
   dryRun: boolean;
+  /** `${profession}:${variant}` — only used when `mode` is "profession". */
+  structureId: string;
 }
 
 export interface ArrangeItem {
@@ -158,7 +160,7 @@ export interface ArrangeSummaryRow {
 /* Duplicates                                                          */
 /* ------------------------------------------------------------------ */
 
-export type DuplicateMatch = "exact" | "audio" | "image" | "visual" | "name";
+export type DuplicateMatch = "exact" | "audio" | "image" | "video" | "visual" | "name";
 
 export interface DuplicateOptions {
   byHash: boolean;
@@ -196,6 +198,17 @@ export interface RenameOptions {
   caseMode: CaseMode;
   startIndex: number;
   seqPadding: number;
+}
+
+/** A folder rename row — same shape as a file row, without size/kind. */
+export interface FolderRenameRow {
+  id: string;
+  name: string;
+  path: string;
+  nextName: string;
+  changed: boolean;
+  conflict: boolean;
+  error?: string;
 }
 
 export interface RenameRow {
@@ -351,6 +364,8 @@ export interface UndoRecord {
 export type InsightKind = "duplicates" | "screenshots" | "large" | "stale" | "mixed" | "similar" | "unstyled" | "installers";
 
 export interface Insight {
+  /** Ids of the files this insight is talking about, so the UI can select them. */
+  files?: string[];
   id: string;
   kind: InsightKind;
   title: string;
@@ -359,7 +374,7 @@ export interface Insight {
   impact?: string;
   actionLabel: string;
   /** Where the action sends the user. */
-  target: "duplicates" | "arrange" | "styles";
+  target: "duplicates" | "arrange" | "styles" | "files";
   rule?: Partial<ArrangeRule>;
   folder?: string;
   preset?: StylePreset;

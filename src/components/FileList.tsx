@@ -20,6 +20,9 @@ export function FileList({
   onToggleAll,
   onPick,
   onRecursiveChange,
+  autoPreview,
+  onToggleAutoPreview,
+  onFocusFile,
 }: {
   files: AppFile[];
   selected: Set<string>;
@@ -33,6 +36,9 @@ export function FileList({
   onToggleAll: () => void;
   onPick: () => void;
   onRecursiveChange: (value: boolean) => void;
+  autoPreview: boolean;
+  onToggleAutoPreview: (value: boolean) => void;
+  onFocusFile: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<FileKind | "all">("all");
@@ -71,6 +77,26 @@ export function FileList({
   );
 
   const allVisibleSelected = visible.length > 0 && visible.every((f) => selected.has(f.id));
+
+  // Bring the active row into view — used by arrow navigation and by clicking a
+  // duplicate in the review pane.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !activeId) return;
+    const index = visible.findIndex((file) => file.id === activeId);
+    if (index < 0) return;
+    const top = index * ROW;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight;
+  }, [activeId, visible]);
+
+  const step = (delta: number) => {
+    if (visible.length === 0) return;
+    const current = visible.findIndex((file) => file.id === activeId);
+    const base = current < 0 ? (delta > 0 ? -1 : 0) : current;
+    const next = visible[Math.min(visible.length - 1, Math.max(0, base + delta))];
+    if (next) onFocusFile(next.id);
+  };
 
   // Windowed rendering keeps 20 000-file folders at 60 fps.
   const start = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
@@ -124,8 +150,33 @@ export function FileList({
         className="filelist"
         role="listbox"
         aria-multiselectable="true"
+        aria-label="Files"
+        tabIndex={0}
         ref={listRef}
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+        onKeyDown={(e) => {
+          // Stop the window handler from stepping a second time.
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            e.stopPropagation();
+            step(1);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            e.stopPropagation();
+            step(-1);
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            const first = visible[0];
+            if (first) onFocusFile(first.id);
+          } else if (e.key === "End") {
+            e.preventDefault();
+            const last = visible[visible.length - 1];
+            if (last) onFocusFile(last.id);
+          } else if (e.key === " " && activeId) {
+            e.preventDefault();
+            onToggle(activeId);
+          }
+        }}
       >
         {files.length === 0 ? (
           <Empty
@@ -196,6 +247,16 @@ export function FileList({
           {selected.size > 0 ? `${selected.size} selected · ${humanBytes(selectedBytes)}` : `${files.length} files`}
         </span>
         <span className="spacer" />
+        <button
+          className="chip"
+          data-active={autoPreview}
+          aria-pressed={autoPreview}
+          onClick={() => onToggleAutoPreview(!autoPreview)}
+          title="Smart audition — preview the active file instantly; audio plays as you arrow through the list"
+        >
+          <Icon name={autoPreview ? "play" : "pause"} size={10} strokeWidth={2.4} />
+          Audition
+        </button>
         <Toggle checked={recursive} onChange={onRecursiveChange} label="Subfolders" />
       </div>
       {demo ? (

@@ -1,27 +1,54 @@
-import { RENAME_TOKENS, buildPatternName } from "../../lib/organizer/engine";
-import type { RenameOptions, RenameRow } from "../../lib/organizer/types";
+import { RENAME_TOKENS } from "../../lib/organizer/engine";
+import type { FolderRenameRow, RenameOptions, RenameRow } from "../../lib/organizer/types";
 import { Icon } from "../Icon";
 import { Badge, Empty, Segmented, Spinner } from "../ui";
 
+export type RenameMode = "files" | "folders";
+
 export function RenameTab({
+  mode,
+  setMode,
   options,
   setOptions,
   rows,
+  folderRows,
   onApply,
   busy,
   onExport,
 }: {
+  mode: RenameMode;
+  setMode: (mode: RenameMode) => void;
   options: RenameOptions;
   setOptions: (next: RenameOptions) => void;
   rows: RenameRow[];
+  folderRows: FolderRenameRow[];
   onApply: () => void;
   busy: boolean;
   onExport: () => void;
 }) {
   const patch = (next: Partial<RenameOptions>) => setOptions({ ...options, ...next });
-  const changed = rows.filter((r) => r.changed && !r.conflict && !r.error);
-  const blocked = rows.filter((r) => r.conflict || r.error);
-  const sample = rows[0];
+  const folders = mode === "folders";
+
+  // One table shape for both modes; folders simply have no extension.
+  const plan: { key: string; old: string; next: string; changed: boolean; blocked: string | null }[] = folders
+    ? folderRows.map((row) => ({
+        key: row.path,
+        old: row.name,
+        next: row.nextName,
+        changed: row.changed,
+        blocked: row.conflict ? "taken" : (row.error ?? null),
+      }))
+    : rows.map((row) => ({
+        key: row.file.id,
+        old: row.file.name,
+        next: row.nextName,
+        changed: row.changed,
+        blocked: row.conflict ? "taken" : (row.error ?? null),
+      }));
+
+  const ready = plan.filter((row) => row.changed && !row.blocked);
+  const blocked = plan.filter((row) => row.blocked);
+  const sample = mode === "folders" ? folderRows.find((row) => row.changed) : rows[0];
 
   return (
     <div className="panel">
@@ -30,9 +57,20 @@ export function RenameTab({
           <Icon name="pencil" size={14} />
           Batch rename
         </span>
-        <span className="panel-sub">· {rows.length} selected · names only, contents untouched</span>
+        <span className="panel-sub">
+          · {plan.length} {folders ? "folder" : "selected"} · names only, contents untouched
+        </span>
         <span className="spacer" />
-        {blocked.length > 0 ? <Badge tone="warn">{blocked.length} blocked</Badge> : <Badge tone="ok">{changed.length} ready</Badge>}
+        <Segmented
+          ariaLabel="What to rename"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { id: "files", label: "Files" },
+            { id: "folders", label: "Folders" },
+          ]}
+        />
+        {blocked.length > 0 ? <Badge tone="warn">{blocked.length} blocked</Badge> : <Badge tone="ok">{ready.length} ready</Badge>}
       </div>
 
       <div className="panel-body">
@@ -43,7 +81,7 @@ export function RenameTab({
               className="input mono"
               value={options.pattern}
               onChange={(e) => patch({ pattern: e.target.value })}
-              placeholder="{name}-{counter}"
+              placeholder={folders ? "{name} — {counter}" : "{name}-{counter}"}
               spellCheck={false}
             />
             <div className="tokenbar">
@@ -58,6 +96,12 @@ export function RenameTab({
                 </button>
               ))}
             </div>
+            {folders ? (
+              <span className="hint">
+                Folder tokens work the same way — <code>{"{name}"}</code>, <code>{"{counter}"}</code> and case changes apply to the
+                folder name. Extensions are left alone (folders have none).
+              </span>
+            ) : null}
           </div>
 
           <div className="row" style={{ gap: 8 }}>
@@ -67,7 +111,7 @@ export function RenameTab({
                 className="input mono"
                 value={options.find}
                 onChange={(e) => patch({ find: e.target.value })}
-                placeholder="IMG_"
+                placeholder={folders ? "New folder" : "IMG_"}
                 spellCheck={false}
               />
             </div>
@@ -77,7 +121,7 @@ export function RenameTab({
                 className="input mono"
                 value={options.replace}
                 onChange={(e) => patch({ replace: e.target.value })}
-                placeholder="holiday-"
+                placeholder={folders ? "Client" : "holiday-"}
                 spellCheck={false}
               />
             </div>
@@ -123,32 +167,36 @@ export function RenameTab({
 
           {sample ? (
             <div className="hint mono" style={{ wordBreak: "break-all" }}>
-              {sample.file.name} → <span style={{ color: "var(--ok)" }}>{buildPatternName(sample.file, options, options.startIndex)}</span>
+              {mode === "folders" ? (sample as FolderRenameRow).name : (sample as RenameRow).file.name} →{" "}
+              <span style={{ color: "var(--ok)" }}>{sample.nextName}</span>
             </div>
           ) : null}
         </div>
 
         <div className="divider" />
 
-        {rows.length === 0 ? (
-          <Empty title="No files selected" hint="Select files on the left; the plan updates as you type." />
+        {plan.length === 0 ? (
+          <Empty
+            icon={folders ? "folder" : "file"}
+            title={folders ? "No folders found" : "No files selected"}
+            hint={folders ? "Scan a folder — every subfolder appears here, ready for a pattern." : "Select files on the left; the plan updates as you type."}
+          />
         ) : (
-          rows.map((row) => (
+          plan.map((row) => (
             <div
               className="renrow"
-              key={row.file.id}
+              key={row.key}
               data-changed={row.changed}
-              data-conflict={row.conflict || Boolean(row.error)}
-              title={row.conflict ? "Name already taken in this folder" : row.error}
+              data-conflict={Boolean(row.blocked)}
+              title={row.blocked ?? undefined}
             >
-              <span className="ren-old">{row.file.name}</span>
+              <span className="ren-old">{row.old}</span>
               <span className="arrow">
                 <Icon name="arrowRight" size={11} />
               </span>
               <span className="ren-new">
-                {row.nextName}
-                {row.conflict ? "  (taken)" : ""}
-                {row.error ? `  (${row.error})` : ""}
+                {row.next}
+                {row.blocked ? `  (${row.blocked})` : ""}
               </span>
             </div>
           ))
@@ -156,16 +204,16 @@ export function RenameTab({
       </div>
 
       <div className="footbar">
-        <button className="btn sm ghost" onClick={onExport} disabled={rows.length === 0}>
+        <button className="btn sm ghost" onClick={onExport} disabled={plan.length === 0}>
           <Icon name="download" size={12} /> CSV
         </button>
         <span className="hint tnum">
-          {changed.length} of {rows.length} will change
+          {ready.length} of {plan.length} {folders ? "folders" : "files"} will change
         </span>
         <span className="spacer" />
-        <button className="btn primary" disabled={busy || changed.length === 0} onClick={onApply}>
+        <button className="btn primary" disabled={busy || ready.length === 0} onClick={onApply}>
           {busy ? <Spinner /> : <Icon name="check" size={13} />}
-          {busy ? "Renaming…" : `Rename ${changed.length}`}
+          {busy ? "Renaming…" : `Rename ${ready.length} ${folders ? "folders" : "files"}`}
         </button>
       </div>
     </div>

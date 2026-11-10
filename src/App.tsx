@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AboutDialog, APP_VERSION } from "./components/AboutDialog";
 import { CommandPalette, type Command } from "./components/CommandPalette";
 import { FileList } from "./components/FileList";
 import { PreviewPane } from "./components/PreviewPane";
@@ -8,7 +9,7 @@ import { DuplicatesTab } from "./components/tabs/DuplicatesTab";
 import { FoldersTab } from "./components/tabs/FoldersTab";
 import { InsightsTab } from "./components/tabs/InsightsTab";
 import { LogTab } from "./components/tabs/LogTab";
-import { RenameTab } from "./components/tabs/RenameTab";
+import { RenameTab, type RenameMode } from "./components/tabs/RenameTab";
 import { Icon } from "./components/Icon";
 import { Spinner } from "./components/ui";
 import {
@@ -16,6 +17,7 @@ import {
   DEFAULT_DUPLICATE_OPTIONS,
   DEFAULT_RENAME_OPTIONS,
   FOLDER_COLORS,
+  applyFolderRename,
   applyRename,
   arrangePreview,
   buildInsights,
@@ -43,6 +45,7 @@ import {
   listFolders,
   pickFolder,
   refreshShell,
+  renameFolders,
   resetFolderStyle,
   revealInExplorer,
   revertFiles,
@@ -55,6 +58,7 @@ import type {
   AppFile,
   ArrangeRule,
   DuplicateGroup,
+  FolderRenameRow,
   FolderStyle,
   Insight,
   LogEntry,
@@ -73,6 +77,7 @@ const INITIAL_RULE: ArrangeRule = {
   similarityThreshold: 82,
   action: "move",
   dryRun: true,
+  structureId: "general:groups",
 };
 
 const PRESETS: ArrangePreset[] = [
@@ -189,6 +194,9 @@ export default function App() {
   const hashing = hashProgress !== null;
 
   const [renameOptions, setRenameOptions] = useState<RenameOptions>(DEFAULT_RENAME_OPTIONS);
+  const [renameMode, setRenameMode] = useState<RenameMode>("files");
+  const [autoPreview, setAutoPreview] = useState<boolean>(() => loadPreference<string>("arrangeit.autoPreview", "off") === "on");
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [activeFolder, setActiveFolder] = useState<string>(() =>
     tauri ? "" : `${DEMO_ROOT}\\${MOCK_FOLDERS[0]?.name ?? ""}`,
   );
@@ -241,6 +249,14 @@ export default function App() {
       /* ignore */
     }
   }, [customFolders]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("arrangeit.autoPreview", autoPreview ? "on" : "off");
+    } catch {
+      /* ignore */
+    }
+  }, [autoPreview]);
 
   const showToast = useCallback((message: string, kind: "ok" | "error" = "ok") => {
     setToast({ id: uid("toast"), message, kind });
@@ -384,6 +400,10 @@ export default function App() {
   );
 
   const renameRows = useMemo(() => applyRename(selectedFiles, renameOptions), [selectedFiles, renameOptions]);
+  const folderRows: FolderRenameRow[] = useMemo(
+    () => applyFolderRename(allFolders, renameOptions).filter((row) => row.path !== root),
+    [allFolders, renameOptions, root],
+  );
 
   const activeFile = useMemo(() => files.find((f) => f.id === activeId) ?? null, [files, activeId]);
   const activeTarget = useMemo(() => items.find((i) => i.file.id === activeId)?.targetFolder, [items, activeId]);
@@ -433,6 +453,26 @@ export default function App() {
       return next;
     });
   }, []);
+
+  /** Moves the preview cursor without disturbing the selection. */
+  const focusFile = useCallback((id: string) => setActiveId(id), []);
+
+  /** Selection follows the cursor — that is what arrow-key auditioning means. */
+  const focusAndSelect = useCallback((id: string) => {
+    setActiveId(id);
+    setSelection(new Set([id]));
+  }, []);
+
+  const stepActive = useCallback(
+    (delta: number) => {
+      if (files.length === 0) return;
+      const current = files.findIndex((file) => file.id === activeId);
+      const base = current < 0 ? (delta > 0 ? -1 : 0) : current;
+      const next = files[Math.min(files.length - 1, Math.max(0, base + delta))];
+      if (next) focusAndSelect(next.id);
+    },
+    [activeId, files, focusAndSelect],
+  );
 
   const toggleAll = useCallback(() => {
     setSelection((prev) => (prev.size === files.length ? new Set() : new Set(files.map((f) => f.id))));
@@ -622,6 +662,51 @@ export default function App() {
     }
   }, [beginTask, endTask, files, pushLog, pushUndo, renameOptions, renameRows, showToast]);
 
+  const handleRenameFolders = useCallback(async () => {
+    const ready = folderRows.filter((row) => row.changed && !row.conflict && !row.error);
+    if (ready.length === 0) return;
+    const task = beginTask(`Renaming ${ready.length} folder${ready.length === 1 ? "" : "s"}`);
+    try {
+      const parentOf = (path: string) => path.replace(/[\\/][^\\/]+$/, "");
+      const pairs = ready.map((row) => ({ from: row.path, to: `${parentOf(row.path)}\\${row.nextName}` }));
+      const outcome = await renameFolders(pairs, false);
+      pushUndo(outcome.undo);
+
+      const moved = new Map(pairs.map((pair) => [pair.from.toLowerCase(), pair.to]));
+      const remap = (path: string) => {
+        const direct = moved.get(path.toLowerCase());
+        if (direct) return direct;
+        for (const [from, to] of moved) {
+          if (path.toLowerCase().startsWith(`${from}\\`)) return `${to}${path.slice(from.length)}`;
+        }
+        return path;
+      };
+
+      setFolders((prev) => prev.map((folder) => ({ ...folder, path: remap(folder.path), name: baseName(remap(folder.path)) })));
+      setCustomFolders((prev) => prev.map((folder) => ({ ...folder, path: remap(folder.path), name: baseName(remap(folder.path)) })));
+      setStyles((prev) => {
+        const next: Record<string, FolderStyle> = {};
+        for (const [path, style] of Object.entries(prev)) {
+          const moved2 = remap(path);
+          next[moved2] = { ...style, path: moved2, folder: baseName(moved2) };
+        }
+        return next;
+      });
+      setAppliedStyles((prev) => new Set([...prev].map(remap)));
+      setFiles((prev) => prev.map((file) => ({ ...file, path: remap(file.path) })));
+      setActiveFolder((prev) => remap(prev));
+
+      pushLog("rename", `Renamed ${outcome.renamed} folder${outcome.renamed === 1 ? "" : "s"}`, ready.map((r) => `${r.name} → ${r.nextName}`).join(" · "));
+      showToast(`Renamed ${outcome.renamed} folder${outcome.renamed === 1 ? "" : "s"} — Ctrl+Z to undo`);
+      if (root) void scanInto(root, true);
+    } catch (error) {
+      pushLog("error", "Folder rename failed", String(error));
+      showToast("Could not rename those folders — a name may already exist", "error");
+    } finally {
+      endTask(task);
+    }
+  }, [beginTask, endTask, folderRows, pushLog, pushUndo, root, scanInto, showToast]);
+
   const updateStyle = useCallback((folderPath: string, patch: Partial<FolderStyle>) => {
     setStyles((prev) => {
       const base = prev[folderPath] ?? {
@@ -801,11 +886,14 @@ export default function App() {
   }, [items, showToast]);
 
   const exportRename = useCallback(async () => {
-    const rows = [["current", "proposed", "conflict"], ...renameRows.map((r) => [r.file.name, r.nextName, String(r.conflict)])];
+    const rows =
+      renameMode === "folders"
+        ? [["current", "proposed", "conflict"], ...folderRows.map((r) => [r.name, r.nextName, String(r.conflict || Boolean(r.error))])]
+        : [["current", "proposed", "conflict"], ...renameRows.map((r) => [r.file.name, r.nextName, String(r.conflict)])];
     const csv = rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\r\n");
     const saved = await saveTextFile(`arrangeit-rename-${new Date().toISOString().slice(0, 10)}.csv`, csv);
     if (saved) showToast("Rename plan exported");
-  }, [renameRows, showToast]);
+  }, [folderRows, renameMode, renameRows, showToast]);
 
   const exportDuplicateReport = useCallback(async () => {
     const rows = [
@@ -829,8 +917,31 @@ export default function App() {
     if (saved) showToast("Duplicate report exported");
   }, [keeperStrategy, keepers, showToast, visibleGroups]);
 
+  const showInsightFiles = useCallback(
+    (insight: Insight) => {
+      const ids = insight.files ?? [];
+      if (ids.length === 0) {
+        showToast("Nothing to show for this one");
+        return;
+      }
+      setSelection(new Set(ids));
+      setActiveId(ids[0]);
+      setScope("selected");
+      showToast(
+        ids.length === 1
+          ? `Selected ${files.find((file) => file.id === ids[0])?.name ?? "1 file"}`
+          : `Selected ${ids.length} files — they are highlighted in the list`,
+      );
+    },
+    [files, showToast],
+  );
+
   const handleInsight = useCallback(
     async (insight: Insight) => {
+      if (insight.target === "files") {
+        showInsightFiles(insight);
+        return;
+      }
       if (insight.target === "duplicates") {
         setTab("duplicates");
         if (!scanned) {
@@ -879,7 +990,7 @@ export default function App() {
         setPlanBusy(null);
       }
     },
-    [allFolders, applyPresetToStyle, applyStyleTo, handleAutoStyle, pushLog, root, runDuplicateScan, scanned, showToast],
+    [allFolders, applyPresetToStyle, applyStyleTo, handleAutoStyle, pushLog, root, runDuplicateScan, scanned, showInsightFiles, showToast],
   );
 
   /* ---------------- command palette ---------------- */
@@ -911,6 +1022,46 @@ export default function App() {
       list.push({ id: `theme-${item.id}`, label: `Theme: ${item.label}`, group: "Appearance", icon: "palette", run: () => setTheme(item.id) });
     }
 
+    list.push(
+      {
+        id: "about",
+        label: "About ArrangeIt",
+        desc: `v${APP_VERSION} · Developed by Qmer`,
+        group: "Help",
+        icon: "info",
+        run: () => setAboutOpen(true),
+      },
+      {
+        id: "audition",
+        label: autoPreview ? "Turn off smart audition" : "Turn on smart audition",
+        desc: "Preview as you browse · audio plays automatically",
+        group: "Appearance",
+        icon: autoPreview ? "pause" : "play",
+        run: () => setAutoPreview(!autoPreview),
+      },
+      {
+        id: "rename-folders",
+        label: "Batch rename folders",
+        group: "Actions",
+        icon: "pencil",
+        run: () => {
+          setRenameMode("folders");
+          setTab("rename");
+        },
+      },
+      {
+        id: "persona",
+        label: "Arrange by profession…",
+        desc: "13 structures — designer, video, coder, student…",
+        group: "Actions",
+        icon: "layers",
+        run: () => {
+          setRule((prev) => ({ ...prev, mode: "profession" }));
+          setTab("arrange");
+        },
+      },
+    );
+
     list.push({
       id: "effects",
       label: effects === "low" ? "Turn glass effects back on" : "Performance mode (less blur)",
@@ -934,7 +1085,21 @@ export default function App() {
     }
 
     return list;
-  }, [addStyleFolder, allFolders, chooseFolder, effects, exportPlan, handleArrange, handleAutoStyle, handleUndo, keepOnePerFolder, rule, runDuplicateScan, runScan]);
+  }, [
+    addStyleFolder,
+    allFolders,
+    autoPreview,
+    chooseFolder,
+    effects,
+    exportPlan,
+    handleArrange,
+    handleAutoStyle,
+    handleUndo,
+    keepOnePerFolder,
+    rule,
+    runDuplicateScan,
+    runScan,
+  ]);
 
   /* ---------------- keyboard ---------------- */
 
@@ -961,6 +1126,10 @@ export default function App() {
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "o") {
         event.preventDefault();
         void chooseFolder();
+      } else if (autoPreview && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+        // Smart audition: arrow through the folder without touching the mouse.
+        event.preventDefault();
+        stepActive(event.key === "ArrowDown" ? 1 : -1);
       } else if (event.key >= "1" && event.key <= "6") {
         setTab(TABS[Number(event.key) - 1].id);
       } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
@@ -975,7 +1144,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chooseFolder, handleArrange, handleUndo, paletteOpen, runScan, tab]);
+  }, [autoPreview, chooseFolder, handleArrange, handleUndo, paletteOpen, runScan, stepActive, tab]);
 
   const counts: Partial<Record<TabId, number>> = {
     duplicates: visibleGroups.length,
@@ -1014,6 +1183,7 @@ export default function App() {
         onPalette={() => setPaletteOpen(true)}
         reduceEffects={effects === "low"}
         onReduceEffects={(value) => setEffects(value ? "low" : "high")}
+        onAbout={() => setAboutOpen(true)}
       />
 
       <div className="workspace">
@@ -1027,8 +1197,11 @@ export default function App() {
             recursive={recursive}
             demo={!tauri}
             onToggle={toggle}
-            onActivate={setActiveId}
+            onActivate={focusFile}
             onToggleAll={toggleAll}
+            autoPreview={autoPreview}
+            onToggleAutoPreview={setAutoPreview}
+            onFocusFile={focusAndSelect}
             onPick={() => void chooseFolder()}
             onRecursiveChange={(value) => {
               setRecursive(value);
@@ -1050,6 +1223,7 @@ export default function App() {
             busy={busy}
             presets={PRESETS}
             onPreset={(preset) => setRule({ ...rule, ...preset.patch })}
+            files={files}
           />
         ) : null}
 
@@ -1089,15 +1263,20 @@ export default function App() {
             scannedAt={scannedAt}
             hashing={hashing}
             hashProgress={hashProgress}
+            activeId={activeId}
+            onPreview={(file) => focusFile(file.id)}
           />
         ) : null}
 
         {tab === "rename" ? (
           <RenameTab
+            mode={renameMode}
+            setMode={setRenameMode}
             options={renameOptions}
             setOptions={setRenameOptions}
             rows={renameRows}
-            onApply={() => void handleRename()}
+            folderRows={folderRows}
+            onApply={() => void (renameMode === "folders" ? handleRenameFolders() : handleRename())}
             onExport={() => void exportRename()}
             busy={busy}
           />
@@ -1138,6 +1317,7 @@ export default function App() {
               reclaimable: humanBytes(duplicateGroups.reduce((sum, g) => sum + g.reclaimable, 0)),
             }}
             onRun={(insight) => void handleInsight(insight)}
+            onShow={showInsightFiles}
             busy={busy || hashing}
             planBusy={planBusy}
           />
@@ -1147,7 +1327,13 @@ export default function App() {
           <LogTab entries={log} undoStack={undoStack} onUndo={(record) => void handleUndo(record)} onClear={() => setLog([])} />
         ) : null}
 
-        <PreviewPane file={activeFile} targetFolder={activeTarget} onReveal={(path) => void revealInExplorer(path)} />
+        <PreviewPane
+          file={activeFile}
+          targetFolder={activeTarget}
+          onReveal={(path) => void revealInExplorer(path)}
+          autoPlay={autoPreview}
+          audition
+        />
       </div>
 
       <footer className="statusbar">
@@ -1184,7 +1370,9 @@ export default function App() {
             <Icon name="zap" size={11} /> Fast mode
           </button>
         ) : null}
-        <span>v1.4.1</span>
+        <button className="btn sm ghost" onClick={() => setAboutOpen(true)} title="About ArrangeIt">
+          <Icon name="info" size={11} /> v{APP_VERSION}
+        </button>
       </footer>
 
       {toast ? (
@@ -1197,6 +1385,7 @@ export default function App() {
         </div>
       ) : null}
 
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
     </div>
   );

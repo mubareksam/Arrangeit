@@ -64,6 +64,7 @@ export function TopBar({
   onPalette,
   reduceEffects,
   onReduceEffects,
+  onAbout,
 }: {
   tab: TabId;
   setTab: (tab: TabId) => void;
@@ -80,6 +81,7 @@ export function TopBar({
   onPalette: () => void;
   reduceEffects: boolean;
   onReduceEffects: (value: boolean) => void;
+  onAbout: () => void;
 }) {
   const [themeOpen, setThemeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -95,10 +97,10 @@ export function TopBar({
 
   return (
     <header className="topbar">
-      <div className="brand">
+      <button className="brand" onClick={onAbout} title="About ArrangeIt">
         <BrandMark size={29} />
-        <div className="brand-name">ArrangeIt</div>
-      </div>
+        <span className="brand-name">ArrangeIt</span>
+      </button>
 
       <Crumbs root={root} demo={demo} onPick={onPick} />
 

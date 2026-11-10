@@ -4,10 +4,12 @@
 
 Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript** for the UI. Nothing leaves your machine.
 
+**Developed by [Qmer](https://github.com/mubareksam).**
+
 <img src="./docs/icon.png" width="88" align="right" alt="" />
 
-> ### ⬇ [Download ArrangeIt 1.4.1 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.4.1/ArrangeIt_1.4.1_x64-setup.exe)
-> Run `ArrangeIt_1.4.1_x64-setup.exe` — no Rust, Node or other tooling required.
+> ### ⬇ [Download ArrangeIt 1.5.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.5.0/ArrangeIt_1.5.0_x64-setup.exe)
+> Run `ArrangeIt_1.5.0_x64-setup.exe` — no Rust, Node or other tooling required.
 > Already on an older version? Just run it: the installer upgrades in place (same app id +
 > install folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
@@ -19,6 +21,44 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
  └───────────────┴────────────────────────────────────────────┴────────────────┘
     Ctrl+K opens the command palette from anywhere.
 ```
+
+## What's new in 1.5.0 — arrange like a professional
+
+**52 folder structures across 13 professions.** A graphic designer wants *Design Files · Exports ·
+Fonts · Assets*; a video editor wants *Footage · Audio · Project Files · Graphics · LUTs*; a student
+wants *Lectures · Assignments · Notes · Papers · Slides · Exam Prep*. Each profession ships four
+shapes — **by role**, **role + year**, **project first**, and **project, then role** — so the same
+profession can organise two different folders two different ways. ArrangeIt **detects** the likely
+profession from the extension mix (showing a confidence figure and a one-click *Use …*), marks the
+variant it recommends for the files actually present, and always allows a manual pick.
+
+**No more empty folders.** A file already sitting in its planned folder no longer produces a move,
+and the Rust executor only creates directories it is about to write into — anything a failed move
+leaves behind is pruned. Nested `Project/Role` targets are supported (each segment sanitised).
+
+**Folders rename like files.** The rename tab gained a *Files / Folders* switch: the same pattern
+tokens, find/replace and case rules, the same two-phase temp-staging commit, the same Ctrl+Z undo.
+
+**Glass with a body.** Panels are no longer a transparent rectangle — they layer a fine grain, a lit
+top edge and a tinted fill under a `backdrop-filter` blur, so the aurora behind is implied rather
+than seen. Fast mode drops the blur, not the texture.
+
+**Insights that do something.** Every insight now carries the ids of the files it is about, so
+*Show N files* selects and highlights them in the list — and a new *largest file* insight jumps
+straight to the heaviest file in the folder instead of just naming it.
+
+**Duplicate review, side by side.** Click any copy in a group (thumbnail strip or row) and it opens
+in the right-hand preview pane — image, audio with waveform, video or text. Matching got smarter:
+a video *same cut* matcher (equal duration ±2 s and the same frame size), a size-band boost for
+re-saved assets, and a guard against pairing a 200 KB file with a 40 MB one on name alone.
+
+**Smart audition — off by default.** The *Audition* chip under the file list turns on instant
+preview, audio autoplay, and ↑/↓ navigation that auditions each file as you walk the list. Built for
+sorting hundreds of sounds without opening an external player.
+
+**Smaller things:** category chips share one height and baseline with a scroll fade; an About dialog
+(header mark or status-bar version) with shortcuts, the privacy line and *Developed by Qmer*;
+palette commands for *Arrange by profession*, *Batch rename folders* and *Smart audition*.
 
 ## What's new in 1.4.1 — a real identity
 
@@ -113,7 +153,7 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 ```bash
 cargo tauri dev
 npm run icons        # regenerate every icon from the vector master
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.4.1_x64-setup.exe
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.5.0_x64-setup.exe
 ```
 
 ## How it works

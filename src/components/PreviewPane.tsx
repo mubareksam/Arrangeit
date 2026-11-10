@@ -54,10 +54,16 @@ export function PreviewPane({
   file,
   targetFolder,
   onReveal,
+  autoPlay = false,
+  audition = false,
 }: {
   file: AppFile | null;
   targetFolder?: string;
   onReveal: (path: string) => void;
+  /** Smart audition: audio starts playing as soon as the file is selected. */
+  autoPlay?: boolean;
+  /** Shows the audition badge in the header. */
+  audition?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -116,6 +122,28 @@ export function PreviewPane({
     }
   }, []);
 
+  // Audition mode: selecting an audio file plays it immediately. Browsers only
+  // allow this after a user gesture, and clicking a row in the list *is* one.
+  useEffect(() => {
+    if (!autoPlay || !file || file.kind !== "audio") return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    let cancelled = false;
+    const start = () => {
+      if (cancelled) return;
+      void audio
+        .play()
+        .then(() => setPlaying(true))
+        .catch(() => undefined);
+    };
+    if (audio.readyState >= 2) start();
+    else audio.addEventListener("loadeddata", start, { once: true });
+    return () => {
+      cancelled = true;
+      audio.removeEventListener("loadeddata", start);
+    };
+  }, [autoPlay, file?.id, file?.kind]);
+
   const seek = useCallback((fraction: number) => {
     setProgress(fraction);
     const audio = audioRef.current;
@@ -148,6 +176,11 @@ export function PreviewPane({
         <span className="panel-title">Preview</span>
         <span className="panel-sub">· {meta.label}</span>
         <span className="spacer" />
+        {audition && autoPlay ? (
+          <span className="audition-flag" title="Smart audition is on — audio plays as you browse">
+            <Icon name="play" size={9} strokeWidth={2.6} /> audition
+          </span>
+        ) : null}
         <KindDot kind={file.kind} />
         {file.ext ? <Badge>{file.ext.toUpperCase()}</Badge> : null}
       </div>
