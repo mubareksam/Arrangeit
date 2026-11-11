@@ -68,6 +68,8 @@ export function FoldersTab({
   root,
   canStyle,
   activeName,
+  onHideToggle,
+  styled,
 }: {
   folders: FolderEntry[];
   styles: Record<string, FolderStyle>;
@@ -86,6 +88,10 @@ export function FoldersTab({
   root: string;
   canStyle: boolean;
   activeName?: string;
+  /** Hides/shows desktop.ini right away for a folder that is already styled. */
+  onHideToggle: (hide: boolean) => void;
+  /** Whether the active folder already carries a style. */
+  styled: boolean;
 }) {
   const style = styles[active];
   const activeFolder = folders.find((folder) => folder.path === active);
@@ -227,12 +233,21 @@ export function FoldersTab({
                   />
                 </div>
 
-                <div className="row" style={{ gap: 14 }}>
-                  <Toggle
-                    checked={current.hideSystemFiles}
-                    onChange={(hideSystemFiles) => set({ hideSystemFiles })}
-                    label="Hide desktop.ini"
-                  />
+                <div className="stack" style={{ gap: 4 }}>
+                  <div className="row" style={{ gap: 14 }}>
+                    <Toggle
+                      checked={current.hideSystemFiles}
+                      onChange={hideSystemFiles => onHideToggle(hideSystemFiles)}
+                      label="Hide desktop.ini"
+                    />
+                  </div>
+                  <span className="hint">
+                    {styled
+                      ? "Applies immediately — no need to press Apply."
+                      : "Applies when you style this folder."}{" "}
+                    Windows still lists desktop.ini if Explorer’s “Show hidden items” is on; that is an Explorer
+                    setting, not a folder one.
+                  </span>
                 </div>
               </div>
 

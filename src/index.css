@@ -1351,7 +1351,7 @@ button {
 
 .modes {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 5px;
 }
 
@@ -1374,6 +1374,17 @@ button {
   color: var(--text);
   transform: translateY(-1px);
   box-shadow: 0 14px 26px -22px rgb(0 0 0 / 0.9);
+}
+
+.mode[data-highlight="true"] {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-soft));
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%),
+    color-mix(in srgb, var(--surface) 60%, transparent);
+  color: var(--text);
+}
+
+.mode[data-highlight="true"] svg {
+  color: var(--accent);
 }
 
 .mode[aria-pressed="true"] {
@@ -2642,6 +2653,33 @@ button {
   line-height: 1;
 }
 
+.hint-action {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border-soft));
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+  transition: border-color 0.16s, background 0.16s, color 0.16s;
+}
+
+.hint-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.hint-action svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
 .persona-variants .chip[data-suggested="true"] {
   border-style: dashed;
   color: var(--text-2);
@@ -2876,6 +2914,159 @@ button.brand:focus-visible {
     opacity: 0;
     transform: translateY(6px) scale(0.985);
   }
+}
+
+/* ---- smart panel ---- */
+
+.smart {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, transparent), transparent 42%),
+    color-mix(in srgb, var(--surface-2) 26%, transparent);
+}
+
+.smart-orb {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--on-accent);
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  box-shadow: 0 10px 20px -14px var(--accent-glow), inset 0 1px 0 rgb(255 255 255 / 0.45);
+}
+
+.smart-conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.smart-meter {
+  width: 62px;
+  height: 5px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--surface-3);
+  border: 1px solid var(--border-soft);
+}
+
+.smart-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
+.smart-disciplines {
+  gap: 5px;
+}
+
+.smart-disciplines .chip {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.smart-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.smart-notes .hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.smart-notes svg {
+  color: var(--ok);
+  flex: 0 0 auto;
+}
+
+.persona-smart {
+  border-style: dashed;
+  grid-column: span 1;
+}
+
+.persona-smart .persona-ico {
+  background: linear-gradient(150deg, var(--accent), var(--accent-2));
+  color: var(--on-accent);
+  border-color: transparent;
+}
+
+/* ---- plan tree (folders + why) ---- */
+
+.plantree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 5px;
+  background: color-mix(in srgb, var(--bg) 26%, transparent);
+  max-height: 232px;
+  overflow: auto;
+}
+
+.plantree-row {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr) minmax(0, 0.9fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.plantree-row:hover {
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+}
+
+.plantree-row[data-depth="1"] {
+  padding-left: 20px;
+}
+
+.plantree-row[data-depth="2"] {
+  padding-left: 33px;
+}
+
+.plantree-row > svg {
+  color: var(--accent);
+  opacity: 0.9;
+}
+
+.plantree-path {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.plantree-path strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.plantree-parent {
+  color: var(--text-3);
+}
+
+.plantree-reason {
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-style: italic;
+  text-align: right;
+}
+
+/* nested target path in the plan table */
+.target-parent {
+  color: var(--text-3);
 }
 
 /* ================================================================== */

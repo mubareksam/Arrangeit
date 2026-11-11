@@ -108,7 +108,7 @@ export const ALL_EXTENSIONS: Record<string, FileKind> = Object.entries(KIND_CONF
 /* Arrange                                                             */
 /* ------------------------------------------------------------------ */
 
-export type ArrangeMode = "date" | "type" | "size" | "similarity" | "name" | "ext" | "profession";
+export type ArrangeMode = "date" | "type" | "size" | "similarity" | "name" | "ext" | "profession" | "smart";
 export type DateGranularity = "year" | "month" | "day";
 export type ArrangeAction = "move" | "copy";
 
@@ -136,9 +136,27 @@ export interface ArrangeRule {
   similarityThreshold: number;
   action: ArrangeAction;
   dryRun: boolean;
-  /** `${profession}:${variant}` — only used when `mode` is "profession". */
+  /** `${profession}:${style}` — only used when `mode` is "profession". */
   structureId: string;
+  /** Knobs for "smart" mode. */
+  smart: SmartOptions;
 }
+
+/** What smart arrange is allowed to do. */
+export interface SmartOptions {
+  /** Top-level folders per discipline when the mix is genuinely mixed. */
+  splitDisciplines: boolean;
+  /** Group files that share a project name into one folder. */
+  projectFolders: boolean;
+  /** Add a year folder when the files span several years. */
+  yearArchive: boolean;
+}
+
+export const DEFAULT_SMART_OPTIONS: SmartOptions = {
+  splitDisciplines: true,
+  projectFolders: true,
+  yearArchive: false,
+};
 
 export interface ArrangeItem {
   file: AppFile;

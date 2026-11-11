@@ -13,4 +13,4 @@ pub use scan::{
     HashEntry, ScanResult, Signature,
 };
 pub use shell::{refresh_shell, reveal_in_explorer, write_text_file};
-pub use style::{apply_folder_style, reset_folder_style, StyleOutcome};
+pub use style::{apply_folder_style, reset_folder_style, toggle_desktop_ini, StyleOutcome};

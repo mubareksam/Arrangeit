@@ -338,6 +338,22 @@ export async function resetFolderStyle(root: string, folder: string, path?: stri
   ];
 }
 
+/**
+ * Hides (or shows) an existing desktop.ini without touching the icon, so the
+ * switch in the Styles tab acts on folders that are already styled.
+ */
+export async function toggleDesktopIni(folderPath: string, hide: boolean): Promise<StyleStep> {
+  if (isTauri()) {
+    return invokeTauri<StyleStep>("toggle_desktop_ini", { folder: folderPath, hide });
+  }
+  await wait(160);
+  return {
+    command: `attrib ${hide ? "+s +h" : "-s -h"} "${folderPath}\\desktop.ini"`,
+    ok: true,
+    detail: hide ? "desktop.ini hidden (demo)" : "desktop.ini visible (demo)",
+  };
+}
+
 export async function refreshShell(): Promise<StyleStep> {
   if (isTauri()) {
     return invokeTauri<StyleStep>("refresh_shell");

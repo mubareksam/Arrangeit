@@ -384,10 +384,6 @@ fn desktop_ini(style: &FolderStyle, icon: &Path) -> String {
          IconIndex=0\r\n\
          InfoTip={tooltip}\r\n\
          IconResource=\"{icon}\",0\r\n\
-         \r\n\
-         [ViewState]\r\n\
-         Mode=\r\n\
-         Vid=\r\n\
          FolderType=Documents\r\n"
     )
 }
@@ -409,6 +405,35 @@ fn attrib(args: &[&str]) -> bool {
         let _ = args;
         true
     }
+}
+
+#[cfg(windows)]
+fn is_hidden_system(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+    match path.metadata() {
+        Ok(meta) => {
+            let attrs = meta.file_attributes();
+            attrs & FILE_ATTRIBUTE_HIDDEN != 0 && attrs & FILE_ATTRIBUTE_SYSTEM != 0
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+fn is_hidden_system(_path: &Path) -> bool {
+    true
+}
+
+/// Sets +s +h and *verifies* it. Explorer can hold the entry open for a moment
+/// right after the write, so one retry is worth more than a silent failure.
+pub fn hide_metadata_file(path: &Path) -> bool {
+    if set_attributes(&["+s", "+h"], path) && is_hidden_system(path) {
+        return true;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    set_attributes(&["+s", "+h"], path) && is_hidden_system(path)
 }
 
 fn set_attributes(flags: &[&str], path: &Path) -> bool {
@@ -501,20 +526,23 @@ pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool)
         detail: String::from("Required for the shell to honour folder metadata"),
     });
 
-    let ini_ok = if !style.hide_system_files {
+    let ini_ok = if dry_run {
         true
-    } else if dry_run {
-        true
+    } else if style.hide_system_files {
+        hide_metadata_file(&ini)
     } else {
-        set_attributes(&["+s"], &ini) && set_attributes(&["+h"], &ini)
+        // Show it again when the switch is off — the toggle works both ways.
+        set_attributes(&["-s", "-h"], &ini)
     };
     steps.push(StyleStep {
         command: format!("attrib +s +h \"{}\"", ini.display()),
         ok: ini_ok,
-        detail: if style.hide_system_files {
-            String::from("desktop.ini hidden + system")
+        detail: if !style.hide_system_files {
+            String::from("Left visible — hide desktop.ini is off")
+        } else if ini_ok {
+            String::from("desktop.ini hidden + system (verified)")
         } else {
-            String::from("Skipped — hide desktop.ini is off")
+            String::from("Could not hide desktop.ini — another program is holding the file")
         },
     });
 
@@ -542,6 +570,33 @@ pub async fn apply_folder_style(style: FolderStyle, root: String, dry_run: bool)
     };
 
     Ok(StyleOutcome { steps, undo, icon_path: icon_path.to_string_lossy().to_string() })
+}
+
+/// Hides or shows an existing `desktop.ini` without rewriting the icon.
+#[tauri::command]
+pub async fn toggle_desktop_ini(folder: String, hide: bool) -> Result<StyleStep, String> {
+    let ini = Path::new(&folder).join("desktop.ini");
+    if !ini.is_file() {
+        return Err(String::from("This folder has no desktop.ini yet — apply an icon first."));
+    }
+    let ok = if hide {
+        hide_metadata_file(&ini)
+    } else {
+        set_attributes(&["-s", "-h"], &ini)
+    };
+    if ok && hide && !is_hidden_system(&ini) {
+        return Err(String::from("Windows still reports desktop.ini as visible."));
+    }
+    let _ = refresh_icon_cache();
+    Ok(StyleStep {
+        command: format!("attrib {}{} \"{}\"", if hide { "+s " } else { "-s " }, if hide { "+h" } else { "-h" }, ini.display()),
+        ok,
+        detail: if hide {
+            String::from("desktop.ini hidden — press F5 in Explorer if it lingers")
+        } else {
+            String::from("desktop.ini is visible again")
+        },
+    })
 }
 
 /// Removes a custom folder icon and restores Windows' default folder look.
