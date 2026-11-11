@@ -131,6 +131,17 @@ fn text_preview(path: &Path, size: u64) -> Option<String> {
     Some(text.chars().take(1200).collect::<String>().replace("\r\n", "\n"))
 }
 
+/// OS metadata files — never user content.
+///
+/// `desktop.ini` matters most: the folder-style feature writes one per styled
+/// folder, so listing it would make the app's own "Hide desktop.ini" switch look
+/// broken. Office lock files (`~$report.docx`) are noise too.
+pub fn is_metadata_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(lower.as_str(), "desktop.ini" | "thumbs.db" | "ehthumbs.db" | ".ds_store" | "icon")
+        || lower.starts_with("~$")
+}
+
 /// Cheap pass: metadata only, nothing opened.
 fn build_file(path: &PathBuf) -> Option<AppFile> {
     let meta = path.metadata().ok()?;
@@ -138,6 +149,9 @@ fn build_file(path: &PathBuf) -> Option<AppFile> {
         return None;
     }
     let name = path.file_name()?.to_string_lossy().to_string();
+    if is_metadata_name(&name) {
+        return None;
+    }
     let ext = ext_of(&name);
     let kind = kind_for_ext(&ext);
 
@@ -182,6 +196,9 @@ pub async fn scan_folder(path: String, recursive: bool, hash: bool) -> Result<Sc
     let mut truncated = false;
     for entry in walker.filter_map(Result::ok) {
         if entry.file_type().is_file() {
+            if is_metadata_name(&entry.file_name().to_string_lossy()) {
+                continue;
+            }
             paths.push(entry.into_path());
             if paths.len() >= MAX_FILES {
                 truncated = true;
@@ -308,6 +325,9 @@ pub async fn list_folders(path: String) -> Result<Vec<FolderEntry>, String> {
         let mut bytes = 0u64;
         if let Ok(children) = std::fs::read_dir(entry.path()) {
             for child in children.filter_map(Result::ok).take(MAX_FOLDER_SAMPLE) {
+                if is_metadata_name(&child.file_name().to_string_lossy()) {
+                    continue;
+                }
                 if let Ok(meta) = child.metadata() {
                     if meta.is_file() {
                         files += 1;

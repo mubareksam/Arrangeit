@@ -10,6 +10,7 @@
 import {
   ALL_EXTENSIONS,
   DEFAULT_SIZE_RANGES,
+  DEFAULT_SMART_OPTIONS,
   KIND_CONFIG,
   STYLE_PRESETS,
   type AppFile,
@@ -29,7 +30,8 @@ import {
   type StylePreset,
   type StyleStep,
 } from "./types";
-import { folderForStructure } from "./structures";
+import { structurePlan } from "./structures";
+import { smartPlan } from "./smart";
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -235,6 +237,13 @@ export function bucketFor(file: AppFile, rule: ArrangeRule): string {
 export function arrangePreview(files: AppFile[], rule: ArrangeRule, basePath = ""): ArrangeItem[] {
   const root = basePath.replace(/[\\/]+$/, "");
   const items: ArrangeItem[] = [];
+  const push = (file: AppFile, targetFolder: string) =>
+    items.push({
+      file,
+      targetFolder,
+      targetPath: `${root}\\${targetFolder.replace(/\//g, "\\")}\\${file.name}`,
+      status: "ok",
+    });
 
   if (rule.mode === "similarity") {
     const buckets = similarityBuckets(files, rule.similarityThreshold);
@@ -242,35 +251,16 @@ export function arrangePreview(files: AppFile[], rule: ArrangeRule, basePath = "
       // A lone file has nothing to be similar *to* — park it in one shared bucket
       // instead of creating a folder per file.
       const targetFolder = group.length > 1 ? `Similar · ${label}` : "Unmatched";
-      for (const file of [...group].sort(byName)) {
-        items.push({
-          file,
-          targetFolder,
-          targetPath: `${root}\\${targetFolder}\\${file.name}`,
-          status: "ok",
-        });
-      }
+      for (const file of [...group].sort(byName)) push(file, targetFolder);
     }
   } else if (rule.mode === "profession") {
-    for (const file of files) {
-      const targetFolder = folderForStructure(file, rule.structureId);
-      items.push({
-        file,
-        targetFolder,
-        targetPath: `${root}\\${targetFolder.replace(/\//g, "\\")}\\${file.name}`,
-        status: "ok",
-      });
-    }
+    const plan = structurePlan(files, rule.structureId);
+    for (const file of files) push(file, plan.folders.get(file.id) ?? "Other");
+  } else if (rule.mode === "smart") {
+    const plan = smartPlan(files, rule.smart ?? DEFAULT_SMART_OPTIONS);
+    for (const file of files) push(file, plan.folders.get(file.id) ?? "Other");
   } else {
-    for (const file of files) {
-      const targetFolder = bucketFor(file, rule);
-      items.push({
-        file,
-        targetFolder,
-        targetPath: `${root}\\${targetFolder}\\${file.name}`,
-        status: "ok",
-      });
-    }
+    for (const file of files) push(file, bucketFor(file, rule));
   }
 
   // Drop no-op moves: a file already sitting in its planned folder must not

@@ -3,14 +3,19 @@ import { humanBytes } from "../../lib/organizer/engine";
 import {
   PROFESSIONS,
   PROFESSION_BY_ID,
-  STRUCTURE_VARIANTS,
+  STRUCTURE_TEMPLATES,
   detectProfession,
   explainGuess,
   projectKey,
-  variantById,
+  structurePlan,
+  templateById,
+  yearOf,
+  type TemplateStyle,
 } from "../../lib/organizer/structures";
+import { smartPlan } from "../../lib/organizer/smart";
 import {
   DEFAULT_SIZE_RANGES,
+  DEFAULT_SMART_OPTIONS,
   type AppFile,
   type ArrangeItem,
   type ArrangeMode,
@@ -21,19 +26,55 @@ import { Icon, type IconName } from "../Icon";
 import { Badge, KindDot, Segmented, Toggle } from "../ui";
 
 const MODES: { id: ArrangeMode; label: string; icon: IconName; hint: string }[] = [
-  { id: "date", label: "Date", icon: "clock", hint: "Year, month or day buckets" },
+  { id: "smart", label: "Smart", icon: "zap", hint: "Reads the files and decides — mixed work welcome" },
+  { id: "profession", label: "Persona", icon: "layers", hint: "Real folder layouts for a specific job" },
   { id: "type", label: "Type", icon: "grid", hint: "Images, Audio, Documents…" },
+  { id: "date", label: "Date", icon: "clock", hint: "Year, month or day buckets" },
   { id: "size", label: "Size", icon: "sliders", hint: "Tiny → Huge ranges" },
   { id: "similarity", label: "Similar", icon: "sparkles", hint: "Cluster look-alike names" },
   { id: "name", label: "Name", icon: "sort", hint: "Alphabetical folders" },
   { id: "ext", label: "Extension", icon: "file", hint: "One folder per extension" },
-  { id: "profession", label: "Persona", icon: "layers", hint: "Structures built for a specific job" },
 ];
 
 export interface ArrangePreset {
   id: string;
   label: string;
   patch: Partial<ArrangeRule>;
+}
+
+interface PlanGroup {
+  folder: string;
+  files: number;
+  reason: string;
+}
+
+/** Folder tree with the reason each folder exists. */
+function PlanTree({ groups, empty }: { groups: PlanGroup[]; empty: string }) {
+  if (groups.length === 0) {
+    return <div className="hint" style={{ padding: "14px 4px", textAlign: "center" }}>{empty}</div>;
+  }
+  return (
+    <div className="plantree">
+      {groups.map((group) => {
+        const segments = group.folder.split("/");
+        const leaf = segments.pop() ?? group.folder;
+        const parent = segments.join(" / ");
+        return (
+          <div className="plantree-row" key={group.folder} data-depth={Math.min(2, group.folder.split("/").length - 1)}>
+            <Icon name="folder" size={12} />
+            <span className="plantree-path ellipsis" title={group.folder}>
+              {parent ? <span className="plantree-parent">{parent} / </span> : null}
+              <strong>{leaf}</strong>
+            </span>
+            <span className="plantree-reason ellipsis" title={group.reason}>
+              {group.reason}
+            </span>
+            <span className="hint tnum">{group.files}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function ArrangeTab({
@@ -69,26 +110,6 @@ export function ArrangeTab({
   const collisions = items.filter((i) => i.status === "collision").length;
   const totalBytes = items.reduce((sum, i) => sum + i.file.size, 0);
   const activeMode = MODES.find((mode) => mode.id === rule.mode)!;
-  const activeStructure = variantById(rule.structureId);
-  const activeProfession = PROFESSION_BY_ID[activeStructure.profession];
-  const guess = useMemo(() => detectProfession(files), [files]);
-
-  // The best *shape* for the files in front of us: many distinct projects want
-  // a project-first tree, a long-lived folder wants years, everything else the
-  // flat role folders.
-  const recommended = useMemo(() => {
-    const projects = new Set(files.map((file) => projectKey(file)));
-    const years = new Set(files.map((file) => new Date(file.modified).getFullYear()));
-    if (files.length >= 24 && projects.size >= 4) return "project-groups";
-    if (projects.size >= 6) return "project";
-    if (files.length >= 40 && years.size >= 3) return "groups-year";
-    return "groups";
-  }, [files]);
-
-  const guessedVariant = STRUCTURE_VARIANTS.find(
-    (variant) => variant.profession === guess.profession.id && variant.style === recommended,
-  );
-  const folderCount = new Set(items.map((item) => item.targetFolder)).size;
 
   const toggleRange = (id: string) => {
     const has = rule.sizeRanges.some((range) => range.id === id);
@@ -97,6 +118,39 @@ export function ArrangeTab({
       : [...rule.sizeRanges, DEFAULT_SIZE_RANGES.find((range) => range.id === id)!];
     patch({ sizeRanges: next.length ? next : DEFAULT_SIZE_RANGES });
   };
+
+  /* ---- profession ---- */
+
+  const template = templateById(rule.structureId);
+  const profession = PROFESSION_BY_ID[template.profession];
+  const guess = useMemo(() => detectProfession(files), [files]);
+
+  const recommendedStyle = useMemo<TemplateStyle>(() => {
+    const projects = new Set(files.map((file) => projectKey(file)).filter(Boolean)).size;
+    const years = new Set(files.map((file) => yearOf(file))).size;
+    if (profession.id === "photographer") return "date-role";
+    if (files.length >= 18 && projects >= 4) return "project-role";
+    if (files.length >= 36 && years >= 3) return "role-year";
+    return "role";
+  }, [files, profession.id]);
+
+  const professionPlan = useMemo(
+    () => (rule.mode === "profession" ? structurePlan(files, rule.structureId) : null),
+    [files, rule.mode, rule.structureId],
+  );
+
+  /* ---- smart ---- */
+
+  const smart = useMemo(
+    () => (rule.mode === "smart" ? smartPlan(files, rule.smart ?? DEFAULT_SMART_OPTIONS) : null),
+    [files, rule.mode, rule.smart],
+  );
+  const smartOptions = rule.smart ?? DEFAULT_SMART_OPTIONS;
+
+  const planGroups: PlanGroup[] =
+    professionPlan?.groups.map((group) => ({ folder: group.folder, files: group.files, reason: group.reason })) ??
+    smart?.report.groups.map((group) => ({ folder: group.folder, files: group.files, reason: group.reason })) ??
+    [];
 
   return (
     <div className="panel">
@@ -125,6 +179,7 @@ export function ArrangeTab({
               <button
                 key={mode.id}
                 className="mode"
+                data-highlight={mode.id === "smart" || mode.id === "profession"}
                 aria-pressed={rule.mode === mode.id}
                 onClick={() => patch({ mode: mode.id })}
                 title={mode.hint}
@@ -147,6 +202,82 @@ export function ArrangeTab({
           </div>
         </div>
 
+        {rule.mode === "smart" && smart ? (
+          <div className="persona smart">
+            <div className="persona-head">
+              <span className="smart-orb" aria-hidden="true">
+                <Icon name="zap" size={13} />
+              </span>
+              <span className="persona-text">
+                <strong>{smart.report.headline}</strong>
+                <em>{smart.report.notes[0]}</em>
+              </span>
+              <span className="spacer" />
+              <span className="smart-conf" title="How much of the folder the analysis explains">
+                <span className="smart-meter">
+                  <i style={{ width: `${smart.report.confidence}%` }} />
+                </span>
+                {smart.report.confidence}% confident
+              </span>
+            </div>
+
+            {smart.report.disciplines.length > 0 ? (
+              <div className="persona-variants smart-disciplines">
+                <span className="label">Detected</span>
+                {smart.report.disciplines.map((discipline) => (
+                  <button
+                    key={discipline.id}
+                    className="chip"
+                    data-active={discipline.id === guess.profession.id}
+                    title={`${discipline.label} · ${discipline.files} files`}
+                    onClick={() =>
+                      patch({ mode: "profession", structureId: `${discipline.id}:${recommendedStyle}` })
+                    }
+                  >
+                    <Icon name="layers" size={10} />
+                    {discipline.label}
+                    <span className="tnum">{discipline.share}%</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="smart-notes">
+              {smart.report.notes.map((note) => (
+                <span key={note} className="hint">
+                  <Icon name="check" size={10} /> {note}
+                </span>
+              ))}
+            </div>
+
+            <div className="row wrap" style={{ gap: 12 }}>
+              <Toggle
+                checked={smartOptions.splitDisciplines}
+                onChange={(splitDisciplines) => patch({ smart: { ...smartOptions, splitDisciplines } })}
+                label="Split mixed work"
+                hint="Design and video in one folder → separate top-level folders"
+              />
+              <Toggle
+                checked={smartOptions.projectFolders}
+                onChange={(projectFolders) => patch({ smart: { ...smartOptions, projectFolders } })}
+                label="Project folders"
+                hint="Group files that share a name stem"
+              />
+              <Toggle
+                checked={smartOptions.yearArchive}
+                onChange={(yearArchive) => patch({ smart: { ...smartOptions, yearArchive } })}
+                label="Year archive"
+                hint="Add a year folder when files span several years"
+              />
+            </div>
+
+            <PlanTree
+              groups={planGroups}
+              empty={files.length === 0 ? "Scan a folder — Smart needs files to read." : "Nothing to plan with these settings."}
+            />
+          </div>
+        ) : null}
+
         {rule.mode === "profession" ? (
           <div className="persona">
             <div className="persona-head">
@@ -156,8 +287,10 @@ export function ArrangeTab({
               {guess.confidence > 0 ? (
                 <button
                   className="btn sm"
-                  onClick={() => patch({ mode: "profession", structureId: guessedVariant?.id ?? `${guess.profession.id}:groups` })}
-                  title="Apply the detected profession and structure"
+                  onClick={() =>
+                    patch({ mode: "profession", structureId: `${guess.profession.id}:${recommendedStyle}` })
+                  }
+                  title="Apply the detected profession and the template that fits these files"
                 >
                   <Icon name="sparkles" size={12} /> Use {guess.profession.label} · {guess.confidence}%
                 </button>
@@ -165,50 +298,82 @@ export function ArrangeTab({
             </div>
 
             <div className="persona-grid">
-              {PROFESSIONS.map((profession) => {
-                const isActive = profession.id === activeProfession.id;
+              {PROFESSIONS.map((entry) => {
+                const isActive = entry.id === profession.id;
                 return (
                   <button
-                    key={profession.id}
+                    key={entry.id}
                     className="persona-card"
                     aria-pressed={isActive}
-                    onClick={() => patch({ structureId: `${profession.id}:${activeStructure.style}` })}
-                    title={profession.blurb}
+                    onClick={() => patch({ structureId: `${entry.id}:${template.style}` })}
+                    title={entry.blurb}
                   >
                     <span className="persona-ico">
-                      <Icon name={profession.icon as IconName} size={14} />
+                      <Icon name={entry.icon as IconName} size={14} />
                     </span>
                     <span className="persona-text">
-                      <strong>{profession.label}</strong>
-                      <em>{profession.blurb}</em>
+                      <strong>{entry.label}</strong>
+                      <em>{entry.blurb}</em>
                     </span>
-                    {guess.confidence > 0 && guess.profession.id === profession.id ? <span className="persona-flag">auto</span> : null}
+                    {guess.confidence > 0 && guess.profession.id === entry.id ? <span className="persona-flag">auto</span> : null}
                   </button>
                 );
               })}
+              <button
+                className="persona-card persona-smart"
+                aria-pressed={false}
+                onClick={() => patch({ mode: "smart" })}
+                title="Let ArrangeIt decide — including mixed and unknown fields"
+              >
+                <span className="persona-ico">
+                  <Icon name="zap" size={14} />
+                </span>
+                <span className="persona-text">
+                  <strong>Not listed? Smart</strong>
+                  <em>Reads the files and builds the right structure for any field.</em>
+                </span>
+              </button>
             </div>
 
             <div className="persona-variants" role="group" aria-label="Folder structure">
               <span className="label">Structure</span>
-              {STRUCTURE_VARIANTS.filter((variant) => variant.profession === activeProfession.id).map((variant) => (
+              {STRUCTURE_TEMPLATES.filter((entry) => entry.profession === profession.id).map((entry) => (
                 <button
-                  key={variant.id}
+                  key={entry.id}
                   className="chip"
-                  data-active={variant.id === activeStructure.id}
-                  data-suggested={activeStructure.id !== variant.id && variant.style === recommended}
-                  aria-pressed={variant.id === activeStructure.id}
-                  onClick={() => patch({ structureId: variant.id })}
-                  title={variant.style === recommended ? `${variant.description} — recommended for these files` : variant.description}
+                  data-active={entry.id === template.id}
+                  data-suggested={entry.id !== template.id && entry.style === recommendedStyle}
+                  aria-pressed={entry.id === template.id}
+                  onClick={() => patch({ structureId: entry.id })}
+                  title={
+                    entry.style === recommendedStyle
+                      ? `${entry.description} — recommended for these files`
+                      : entry.description
+                  }
                 >
-                  {variant.label}
-                  {variant.style === recommended ? <span className="rec">★</span> : null}
+                  {entry.label}
+                  {entry.style === recommendedStyle ? <span className="rec">★</span> : null}
                 </button>
               ))}
               <span className="spacer" />
-              <span className="hint tnum">
-                {activeStructure.description} · {folderCount} folder{folderCount === 1 ? "" : "s"}
+              <span className="hint tnum ellipsis" title={template.description}>
+                {template.description}
               </span>
             </div>
+
+            <PlanTree groups={planGroups} empty={files.length === 0 ? "Scan a folder to preview the structure." : "No files match this structure."} />
+
+            {(() => {
+              const leftovers = planGroups.filter((group) => /(^|\/)Other$/.test(group.folder)).reduce((sum, group) => sum + group.files, 0);
+              if (leftovers === 0) return null;
+              return (
+                <button className="hint hint-action" onClick={() => patch({ mode: "smart" })}>
+                  <Icon name="zap" size={11} />
+                  {leftovers} file{leftovers === 1 ? "" : "s"} don’t belong to this profession — Smart would place them by
+                  discipline instead of dumping them in Other.
+                </button>
+              );
+            })()}
           </div>
         ) : null}
 
@@ -290,26 +455,32 @@ export function ArrangeTab({
                 </td>
               </tr>
             ) : (
-              summary.map((row) => (
-                <tr key={row.folder}>
-                  <td>
-                    <span className="target">
-                      <span className="folder-ico">
-                        <Icon name="folder" size={13} />
+              summary.map((row) => {
+                const segments = row.folder.split("/");
+                const leaf = segments.pop() ?? row.folder;
+                const parent = segments.join(" / ");
+                return (
+                  <tr key={row.folder}>
+                    <td>
+                      <span className="target">
+                        <span className="folder-ico">
+                          <Icon name="folder" size={13} />
+                        </span>
+                        <span className="ellipsis" title={row.folder}>
+                          {parent ? <span className="target-parent">{parent} / </span> : null}
+                          {leaf}
+                        </span>
+                        {row.kinds.map((kind) => (
+                          <KindDot key={kind} kind={kind} />
+                        ))}
+                        {row.status === "collision" ? <Badge tone="warn">clash</Badge> : null}
                       </span>
-                      <span className="ellipsis" title={row.folder}>
-                        {row.folder}
-                      </span>
-                      {row.kinds.map((kind) => (
-                        <KindDot key={kind} kind={kind} />
-                      ))}
-                      {row.status === "collision" ? <Badge tone="warn">clash</Badge> : null}
-                    </span>
-                  </td>
-                  <td className="num">{row.count}</td>
-                  <td className="num">{humanBytes(row.bytes)}</td>
-                </tr>
-              ))
+                    </td>
+                    <td className="num">{row.count}</td>
+                    <td className="num">{humanBytes(row.bytes)}</td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

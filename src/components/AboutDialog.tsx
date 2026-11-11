@@ -3,7 +3,7 @@ import { BrandMark } from "./BrandMark";
 import { Icon } from "./Icon";
 import { Badge } from "./ui";
 
-export const APP_VERSION = "1.5.0";
+export const APP_VERSION = "1.6.0";
 
 const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Ctrl + K", label: "Command palette" },

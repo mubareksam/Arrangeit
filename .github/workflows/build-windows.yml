@@ -50,62 +50,51 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.5.0
-          name: ArrangeIt 1.5.0 (Windows x64)
+          tag_name: v1.6.0
+          name: ArrangeIt 1.6.0 (Windows x64)
           body: |
-            **ArrangeIt 1.5.0** — local-first file organizer for Windows x64.
+            **ArrangeIt 1.6.0** — local-first file organizer for Windows x64.
 
-            Run `ArrangeIt_1.5.0_x64-setup.exe`. It **upgrades 1.4.x in place**
+            Run `ArrangeIt_1.6.0_x64-setup.exe`. It **upgrades 1.5.x in place**
             (same app id and install folder — you never end up with two copies).
 
-            ### Arrange knows your job now
-            13 professions — graphic designer, video editor, motion designer, animator,
-            UI/UX designer, developer, student, business/admin, marketer, social media
-            manager, photographer, musician and general — each with **four structures**:
-            by role, role + year, project-first, and project-then-role. 52 structures in
-            total. The app **auto-detects** the best fit from the extension mix (with a
-            confidence figure and a one-click "Use …"), and marks the variant it recommends
-            for the files actually on screen. You can always pick one by hand.
+            ### New: Smart arrange
+            The Arrange tab now opens on **Smart**, which reads the folder instead of asking
+            you to describe it. It weighs signature formats (.aep, .prproj, .als, .CR3) over
+            generic ones, reads file names for deliverables ("final", "approved"), screenshots
+            and installers, finds project folders from shared name stems, spots multi-year
+            spans, and — when a folder genuinely holds two or three disciplines — splits it
+            into `Design/`, `Video/`, `Audio/` and so on, each with that discipline's own
+            folder roles. Folders for fields it does not model (legal, medical, teaching…)
+            fall back to meaning-based generic folders: Contracts & Invoices, Final & Approved,
+            Working Files, Documents, media, archives. Nothing is silent: the panel shows what
+            it detected, with a confidence meter, the reasons, and a tree of the folders it
+            will create.
 
-            ### Empty folders are impossible
-            Only folders that receive a file are created. The planner drops no-op moves, and
-            the Rust executor prunes any directory a failed move left behind — including
-            nested `Project/Role` paths, which are now supported.
+            ### Rebuilt persona structures
+            All 14 professions were rewritten from how practitioners actually file — studio
+            folders for producers (Sessions · Stems · Bounces & Mixes · References · Samples &
+            Loops · Audio Recordings · MIDI · Presets · Docs), numbered production folders for
+            video (Footage · Audio · Project Files · Graphics · Proxies · LUTs · Exports), the
+            date-first session tree photographers use, client/working/exports for designers,
+            and conventional repository layout for developers. 56 structures in total.
 
-            ### Rename folders, not just files
-            The Batch rename tab has a **Files / Folders** switch. Folders use the same
-            pattern engine (`{name}`, `{counter}`, find/replace, case) with the same
-            two-phase commit and the same Ctrl+Z undo — and no extension handling.
+            Numbers are applied at plan time, so a plan never ships `02_` and `05_` with
+            nothing in between — only folders that receive files exist, numbered in the
+            profession's own order.
 
-            ### Glass, not a window
-            Surfaces are a real frosted texture now: a tinted body, fine grain, a lit top
-            edge, and blur/saturation that fuses them with the aurora behind. Fast mode
-            keeps the grain and drops only the blur cost.
-
-            ### Insights you can click
-            Every insight carries the ids of the files it is about: **Show N files** selects
-            and highlights them in the list, and a new "largest file" insight jumps straight
-            to the heaviest one in the folder.
-
-            ### Duplicate review with a preview pane
-            Click any copy in a group — thumbnail or row — and it opens in the right-hand
-            preview pane for image, audio, video and text comparison. Matching is smarter
-            too: a video "same cut" matcher (equal length within two seconds and the same
-            frame size), a size-band boost for re-saved assets, and a guard against pairing
-            a 200 KB file with a 40 MB one just because the names are alike.
-
-            ### Smart audition (off by default)
-            Turn it on with the **Audition** chip under the file list: the active file is
-            previewed instantly, audio starts playing, and up/down arrows walk the folder
-            while each track autoplays. Meant for sorting hundreds of sound files without an
-            external player.
+            ### Fixed: desktop.ini stayed visible
+            `desktop.ini` is no longer listed as a file (scans skip `desktop.ini`, `Thumbs.db`,
+            `.DS_Store` and Office lock files), the hide step now *verifies* the hidden+system
+            attributes and retries once, `[ViewState]` was dropped so Explorer stops rewriting
+            the file and losing those flags, and turning the switch off makes it visible again.
+            The switch now acts immediately on folders that already have an icon.
 
             ### Also
-            - Category chips under the search field are the same height and baseline, with a
-              scroll fade instead of clipped text.
-            - **About** dialog (brand mark in the header, version in the status bar): version,
-              shortcuts, privacy line, and **Developed by Qmer**.
-            - Recycle Bin deletion and Ctrl+Z undo are unchanged, as is in-place upgrade.
+            - Plan folders are shown as a tree with the reason each one exists.
+            - Persona cards, template chips with a ★ recommendation, and a one-click "Not
+              listed? Smart" card.
+            - Recycle Bin deletion and Ctrl+Z undo unchanged; in-place upgrade unchanged.
 
           files: src-tauri/target/release/bundle/nsis/*.exe
           fail_on_unmatched_files: true

@@ -9,7 +9,7 @@ mod model;
 
 use commands::{
     apply_folder_style, compute_hashes, delete_duplicates, execute_arrange, image_signatures, inspect_file,
-    list_folders, refresh_shell, rename_files, reset_folder_style, reveal_in_explorer, revert_files, scan_folder,
+    list_folders, refresh_shell, rename_files, reset_folder_style, reveal_in_explorer, toggle_desktop_ini, revert_files, scan_folder,
     write_text_file,
 };
 
@@ -27,6 +27,7 @@ pub fn run() {
             revert_files,
             list_folders,
             reset_folder_style,
+            toggle_desktop_ini,
             refresh_shell,
             write_text_file,
             inspect_file,

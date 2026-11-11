@@ -8,8 +8,8 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
 
 <img src="./docs/icon.png" width="88" align="right" alt="" />
 
-> ### ⬇ [Download ArrangeIt 1.5.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.5.0/ArrangeIt_1.5.0_x64-setup.exe)
-> Run `ArrangeIt_1.5.0_x64-setup.exe` — no Rust, Node or other tooling required.
+> ### ⬇ [Download ArrangeIt 1.6.0 for Windows (x64)](https://github.com/mubareksam/Arrangeit/releases/download/v1.6.0/ArrangeIt_1.6.0_x64-setup.exe)
+> Run `ArrangeIt_1.6.0_x64-setup.exe` — no Rust, Node or other tooling required.
 > Already on an older version? Just run it: the installer upgrades in place (same app id +
 > install folder), so you never end up with two copies.
 > The build is unsigned, so SmartScreen may ask for **More info → Run anyway**.
@@ -21,6 +21,41 @@ Built with **Rust + Tauri 2** for the filesystem work and **React + TypeScript**
  └───────────────┴────────────────────────────────────────────┴────────────────┘
     Ctrl+K opens the command palette from anywhere.
 ```
+
+## What's new in 1.6.0 — Smart arrange, and structures that match real practice
+
+**Smart arrange.** A new mode that reads the folder instead of asking you to describe it.
+It weighs *signature* formats (`.aep`, `.prproj`, `.als`, `.CR3`) far above generic ones
+(`.jpg`, `.pdf`), reads names for deliverables ("final", "approved"), screenshots and
+installers, finds project folders from shared name stems, notices multi-year spans, and — when
+a folder really holds two or three disciplines — splits it into `Design/`, `Video/`, `Audio/`…
+with each discipline's own role folders. Fields it does not model (legal, medical, teaching…)
+fall back to meaning-based folders: *Contracts & Invoices · Final & Approved · Working Files ·
+Documents · media · archives*. Everything is explained: detected disciplines with shares, a
+confidence meter, reasons per folder and a tree of the result.
+
+**Persona structures rebuilt from practice**, not invented:
+
+| Field | What it produces |
+| --- | --- |
+| Music producer | `Sessions · Stems · Bounces & Mixes · References · Samples & Loops · Audio Recordings · MIDI · Presets · Docs & Lyrics` — the studio layout, not a bare "Stems" dump |
+| Video editor | `Footage · Audio · Project Files · Graphics · Proxies · LUTs · Exports · Documents` |
+| Photographer | `2026/2026-05-15_Client/{RAW · Selects · Edited · JPEG · Exports · Documents}` — date-first, the way shoots are filed |
+| Graphic designer | `Brief & Contracts · Research & References · Working Files · Exports · Assets · Fonts · Documents` |
+| Motion / 3D | `Project Files · Renders · Assets · Footage · Audio · Scripts · Fonts · References`; 3D adds Scenes, Rigs, Models, Textures, Cache |
+| Developer | conventional repository layout: `Tests · Docs · Config · Scripts · Assets · Source · Build` |
+| Student | `Lectures · Assignments · Notes · Readings · Exams · Slides · Admin` |
+| Office / marketing / social / CAD | contracts & invoices, campaigns & creative, reels & captions, CAD & sheets & regs |
+
+14 professions × 4 templates = **56 structures**, plus per-project variants that give every
+project the full skeleton. Numbers are applied **at plan time**, so a plan never ships `02_` and
+`05_` with nothing between them — and only folders that actually receive files are created.
+
+**Fixed: "Hide desktop.ini" did not hide it.** Scans no longer list `desktop.ini`, `Thumbs.db`,
+`.DS_Store` or `~$` lock files; the hide step now sets *and verifies* hidden+system, retries
+once, and `[ViewState]` was removed from the generated file so Explorer stops rewriting it and
+dropping those flags. Turning the switch off makes it visible again, and the switch now acts
+immediately on folders that already have an icon.
 
 ## What's new in 1.5.0 — arrange like a professional
 
@@ -153,7 +188,7 @@ Desktop app (needs Rust 1.77+ and `cargo install tauri-cli@^2`):
 ```bash
 cargo tauri dev
 npm run icons        # regenerate every icon from the vector master
-cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.5.0_x64-setup.exe
+cargo tauri build    # → src-tauri/target/release/bundle/nsis/ArrangeIt_1.6.0_x64-setup.exe
 ```
 
 ## How it works

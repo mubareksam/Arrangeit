@@ -46,6 +46,7 @@ import {
   pickFolder,
   refreshShell,
   renameFolders,
+  toggleDesktopIni,
   resetFolderStyle,
   revealInExplorer,
   revertFiles,
@@ -68,19 +69,21 @@ import type {
   StyleStep,
   UndoRecord,
 } from "./lib/organizer/types";
-import { DEFAULT_SIZE_RANGES } from "./lib/organizer/types";
+import { DEFAULT_SIZE_RANGES, DEFAULT_SMART_OPTIONS } from "./lib/organizer/types";
 
 const INITIAL_RULE: ArrangeRule = {
-  mode: "type",
+  mode: "profession",
   dateGranularity: "month",
   sizeRanges: DEFAULT_SIZE_RANGES,
   similarityThreshold: 82,
   action: "move",
   dryRun: true,
-  structureId: "general:groups",
+  structureId: "general:role",
+  smart: DEFAULT_SMART_OPTIONS,
 };
 
 const PRESETS: ArrangePreset[] = [
+  { id: "smart", label: "Smart organise", patch: { mode: "smart", action: "move", dryRun: true } },
   { id: "tidy", label: "Tidy by type", patch: { mode: "type", action: "move", dryRun: true } },
   { id: "photos", label: "Photos by month", patch: { mode: "date", dateGranularity: "month" } },
   { id: "big", label: "Big files", patch: { mode: "size", sizeRanges: DEFAULT_SIZE_RANGES.slice(3) } },
@@ -1050,6 +1053,17 @@ export default function App() {
         },
       },
       {
+        id: "smart",
+        label: "Smart organise…",
+        desc: "Reads names and types — mixed work included",
+        group: "Actions",
+        icon: "zap",
+        run: () => {
+          setRule((prev) => ({ ...prev, mode: "smart" }));
+          setTab("arrange");
+        },
+      },
+      {
         id: "persona",
         label: "Arrange by profession…",
         desc: "13 structures — designer, video, coder, student…",
@@ -1223,7 +1237,7 @@ export default function App() {
             busy={busy}
             presets={PRESETS}
             onPreset={(preset) => setRule({ ...rule, ...preset.patch })}
-            files={files}
+            files={scopedFiles}
           />
         ) : null}
 
@@ -1304,6 +1318,23 @@ export default function App() {
             root={root}
             canStyle={canStyle}
             activeName={activeFolderEntry?.name}
+            styled={Boolean(activeFolder) && appliedStyles.has(activeFolder)}
+            onHideToggle={(hide) => {
+              if (!activeFolder) return;
+              updateStyle(activeFolder, { hideSystemFiles: hide });
+              if (!appliedStyles.has(activeFolder)) return;
+              const task = beginTask(hide ? "Hiding desktop.ini" : "Showing desktop.ini");
+              void toggleDesktopIni(activeFolder, hide)
+                .then((step) => {
+                  pushLog("style", step.command, step.detail);
+                  showToast(step.detail, step.ok ? "ok" : "error");
+                })
+                .catch((error) => {
+                  pushLog("error", "desktop.ini toggle failed", String(error));
+                  showToast(String(error), "error");
+                })
+                .finally(() => endTask(task));
+            }}
           />
         ) : null}
 
